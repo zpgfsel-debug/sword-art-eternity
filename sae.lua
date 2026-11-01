@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.5"
+local SAE_VERSION = "1.2.6"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -687,7 +687,7 @@ local function setupParry(makeTracker)
     menu.AddCheckbox(tab, fight, "sae_fight_enabled", "Auto attack while active", false)
     menu.AddCheckbox(tab, fight, "sae_fight_lmb", "Use LMB attacks", true)
     menu.AddSliderFloat(tab, fight, "sae_fight_range", "Attack distance", 2, 12, 7, "%.1f")
-    menu.AddSliderFloat(tab, fight, "sae_fight_matriarch_range", "Matriarch attack distance", 2, 15, 14, "%.1f")
+    menu.AddSliderFloat(tab, fight, "sae_fight_matriarch_range", "Matriarch attack distance", 2, 15, 15, "%.1f")
     menu.AddSliderInt(tab, fight, "sae_fight_interval", "LMB interval (ms)", 150, 1500, 400)
     menu.AddSliderInt(tab, fight, "sae_fight_pause", "Pause after parry (ms)", 400, 2000, 700)
     for slot = 1, 4 do
@@ -856,6 +856,7 @@ local function setupParry(makeTracker)
         local nearby, trackCount, matched, nearest = 0, 0, 0, math.huge
         local threatening = 0
         local attackDistance = math.huge
+        local inAttackRange=0
         local look = camera.GetLookVector()
         nearestInfo = ""
         for _, mob in ipairs(folder:GetChildren()) do
@@ -926,7 +927,18 @@ local function setupParry(makeTracker)
                     end
                     local attackRange=matriarch and menu.Get("sae_fight_matriarch_range") or menu.Get("sae_fight_range")
                     if distance <= attackRange and distance > 0.01 and look then
-                        local dot = ((p.X-origin.X)*look.X+(p.Y-origin.Y)*look.Y+(p.Z-origin.Z)*look.Z)/distance
+                        inAttackRange=inAttackRange+1
+                        -- Facing is yaw, not camera pitch: a tall target remains
+                        -- in front when looking upward toward its head.
+                        local fx,fz=look.X,look.Z
+                        local length=math.sqrt(fx*fx+fz*fz)
+                        if length<0.01 and lp.LookVector then
+                            fx,fz=lp.LookVector.X,lp.LookVector.Z
+                            length=math.sqrt(fx*fx+fz*fz)
+                        end
+                        local dx,dz=p.X-origin.X,p.Z-origin.Z
+                        local horizontal=math.sqrt(dx*dx+dz*dz)
+                        local dot=horizontal<0.01 and 1 or length>=0.01 and (dx*fx+dz*fz)/(horizontal*length) or -1
                         if dot >= 0.5 and s.tracker.Status == "OK" then
                             attackDistance = math.min(attackDistance, distance)
                         end
@@ -976,7 +988,7 @@ local function setupParry(makeTracker)
         if menu.Get("sae_fight_enabled") then
             if threatening > 0 then status = status .. " | waiting: enemy attack"
             elseif now < attackAfter then status = status .. " | waiting: recovery"
-            elseif attackDistance == math.huge then status = status .. " | waiting: target within attack range / facing" end
+            elseif attackDistance == math.huge then status = status .. (inAttackRange==0 and " | waiting: out of attack range" or " | waiting: face target") end
         end
         if menu.Get("sae_ap_log") and now-combatLogAt >= 2 then
             combatLogAt = now
@@ -985,7 +997,7 @@ local function setupParry(makeTracker)
             elseif not holdActive then reason = "combat activation OFF (LMB activates parry only)"
             elseif threatening > 0 then reason = "enemy attack active"
             elseif now < attackAfter then reason = string.format("recovery %.2fs", attackAfter-now)
-            elseif attackDistance == math.huge then reason = "no target in attack range and facing"
+            elseif attackDistance == math.huge then reason = inAttackRange==0 and "out of attack range" or "target behind / unreadable orientation"
             elseif input.IsKeyDown(key) then reason = "parry key held"
             elseif not menu.Get("sae_fight_lmb") then reason = "auto LMB OFF"
             elseif input.IsKeyDown(0x01) then reason = "manual LMB held"
