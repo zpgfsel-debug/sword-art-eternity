@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.4"
+local SAE_VERSION = "1.2.5"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -673,6 +673,9 @@ local function setupParry(makeTracker)
     menu.AddSliderFloat(tab, group, "sae_ap_matriarch_range", "Matriarch detection distance", 2, 80, 40, "%.1f")
     menu.AddHotkey(tab, group, "sae_ap_dodge_key", "Dodge key (Matriarch)", 0x11)
     menu.AddSliderInt(tab, group, "sae_ap_matriarch_dodge_delay", "Matriarch dodge delay (ms)", 0, 1500, 650)
+    menu.AddCheckbox(tab, group, "sae_ap_circles", "Dodge Matriarch danger circles", true)
+    menu.AddSliderInt(tab, group, "sae_ap_circle_fill", "Dodge at circle fill (%)", 20, 95, 65)
+    menu.AddCheckbox(tab, group, "sae_ap_matriarch_anim", "Also dodge by Matriarch animation", false)
     menu.AddLabel(tab, group, "Matriarch casts: dodge. Moving chooses direction; standing still dashes backward.")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
@@ -708,6 +711,71 @@ local function setupParry(makeTracker)
     local state, Tracker, failed = {}, nil, false
     local lastPress = -math.huge
     local lastDodge = -math.huge
+    local circles,circleScanAt={},-math.huge
+    local function circleThreats(now,origin)
+        if not menu.Get("sae_ap_circles") then circles={};return {},0 end
+        if now-circleScanAt>=0.05 then
+            circleScanAt=now
+            local live={}
+            for _,folder in ipairs(game.Workspace:GetChildren())do
+                if folder.Name=="ClientVFX"then
+                    for _,part in ipairs(folder:GetChildren())do
+                        if part.Name=="MatriarchTelegraph" and part:IsA("BasePart")then
+                            local id=part.Address
+                            local record=circles[id] or {part=part,seenAt=now,used=false}
+                            live[id]=record
+                        end
+                    end
+                end
+            end
+            circles=live
+        end
+        local threats,inside={},0
+        for _,record in pairs(circles)do
+            pcall(function()
+                local part=record.part
+                if not utility.IsValid(part) or not part.Parent then return end
+                -- Size and GUI UDim2 are capability probes; fall back to the
+                -- observed warning age if GUI properties cannot be read.
+                local p,size=part.Position,part.Size
+                if not p or not size then return end
+                local radius=math.max(size.X,size.Z)/2
+                if radius<=0 or math.abs(origin.Y-p.Y)>16 then return end
+                local distance=math.sqrt((origin.X-p.X)^2+(origin.Z-p.Z)^2)
+                if distance>radius+1.5 then return end
+                local fill=nil
+                local readable,value=pcall(function()
+                    local surface=part:FindFirstChildOfClass("SurfaceGui")
+                    local outer=surface and surface:FindFirstChildOfClass("Frame")
+                    if not outer then return end
+                    for _,child in ipairs(outer:GetChildren())do
+                        if child:IsA("Frame") and child.BackgroundTransparency~=1 then
+                            return child.Size.X.Scale
+                        end
+                    end
+                end)
+                if readable and type(value)=="number" and value==value and value>=0 and value<=1 then fill=value end
+                local age=now-record.seenAt
+                -- Frame remains briefly after impact. Never trigger from a
+                -- completed GUI warning; the filled fraction follows Quad.In.
+                if fill and fill>=0.995 then return end
+                local target=menu.Get("sae_ap_matriarch_dodge_delay")/1000
+                local due=fill and fill>=menu.Get("sae_ap_circle_fill")/100
+                    or not fill and age>=target and age<=target+0.25
+                inside=inside+1
+                if not record.logged and menu.Get("sae_ap_log")then
+                    record.logged=true
+                    print(string.format("[SAE dodge] Inside circle | radius=%.1f distance=%.1f fill=%s",
+                        radius,distance,fill and string.format("%.2f",fill) or "unreadable; using delay"))
+                end
+                if due and not record.used then
+                    threats[#threats+1]={state=record,action="dodge",distance=distance,
+                        name="Matriarch danger circle",id="MatriarchTelegraph",time=age,target=target}
+                end
+            end)
+        end
+        return threats,inside
+    end
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
     local combatLogAt, clickCount = -math.huge, 0
     local status, testWasDown = "Enable parry, then hold V", false
@@ -725,6 +793,7 @@ local function setupParry(makeTracker)
             if nearestInfo ~= "" then draw.Text(20, 128, nearestInfo, {1, 1, 1, 1}, 14) end
         end
         if not menu.Get("sae_ap_enabled") then
+            circles={};circleScanAt=-math.huge
             previousHealth=nil
             toggleActive, bindWasDown = false, false
             status = "Disabled"; state = {}; testWasDown = false; return
@@ -742,6 +811,7 @@ local function setupParry(makeTracker)
         local holdActive = mode == 2 or (mode == 1 and toggleActive) or (mode == 0 and bindDown)
         local manualAttack = menu.Get("sae_ap_manual_lmb") and input.IsKeyDown(0x01)
         if not holdActive and not manualAttack then
+            circles={};circleScanAt=-math.huge
             previousHealth=nil
             status = mode == 1 and "Toggle OFF" or "Waiting for activation key"; testWasDown = false
             state = {}; return
@@ -842,8 +912,9 @@ local function setupParry(makeTracker)
                             local target = (matriarch and menu.Get("sae_ap_matriarch_dodge_delay")
                                 or plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
                             local moving = now - (old.movedAt or now) <= 0.15
-                            if moving and t <= target+0.9 then threatening = threatening + 1 end
-                            if moving and not old.used and t >= target and t <= target+0.6 then
+                            local animationDefense=not matriarch or menu.Get("sae_ap_matriarch_anim")
+                            if animationDefense and moving and t <= target+0.9 then threatening = threatening + 1 end
+                            if animationDefense and moving and not old.used and t >= target and t <= target+0.6 then
                                 ready[#ready+1] = {state=old, distance=distance,name=mob.Name,id=id,time=t,target=target,
                                     action=matriarch and "dodge" or "parry"}
                             end
@@ -867,10 +938,13 @@ local function setupParry(makeTracker)
                 end
             end
         end
+        local circleReady,inCircle=circleThreats(now,origin)
+        threatening=threatening+inCircle
+        for _,candidate in ipairs(circleReady)do ready[#ready+1]=candidate end
         for key in pairs(state) do if not present[key] then state[key]=nil end end
         table.sort(ready,function(a,b) return a.distance<b.distance end)
         local key = menu.GetKey("sae_ap_key")
-        status = string.format("mobs=%d tracks=%d attacks=%d ready=%d", nearby, trackCount, matched, #ready)
+        status = string.format("mobs=%d tracks=%d attacks=%d circles=%d ready=%d", nearby, trackCount, matched, inCircle, #ready)
         local chosen,defenseKey
         for _,candidate in ipairs(ready)do
             local dodge=candidate.action=="dodge"
