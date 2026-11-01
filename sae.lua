@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.6"
+local SAE_VERSION = "1.2.7"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -674,6 +674,8 @@ local function setupParry(makeTracker)
     menu.AddHotkey(tab, group, "sae_ap_dodge_key", "Dodge key (Matriarch)", 0x11)
     menu.AddSliderInt(tab, group, "sae_ap_matriarch_dodge_delay", "Matriarch dodge delay (ms)", 0, 1500, 650)
     menu.AddCheckbox(tab, group, "sae_ap_circles", "Dodge Matriarch danger circles", true)
+    menu.AddCheckbox(tab, group, "sae_ap_circle_escape", "Run out of large circles + repeat dodge", true)
+    menu.AddLabel(tab, group, "Auto exit uses WASD. Manual movement takes priority.")
     menu.AddSliderInt(tab, group, "sae_ap_circle_fill", "Dodge at circle fill (%)", 20, 95, 65)
     menu.AddCheckbox(tab, group, "sae_ap_matriarch_anim", "Also dodge by Matriarch animation", false)
     menu.AddLabel(tab, group, "Matriarch casts: dodge. Moving chooses direction; standing still dashes backward.")
@@ -712,8 +714,10 @@ local function setupParry(makeTracker)
     local lastPress = -math.huge
     local lastDodge = -math.huge
     local circles,circleScanAt={},-math.huge
+    local escapeTarget=nil
     local function circleThreats(now,origin)
-        if not menu.Get("sae_ap_circles") then circles={};return {},0 end
+        if not menu.Get("sae_ap_circles") then circles={};escapeTarget=nil;return {},0 end
+        if not menu.Get("sae_ap_circle_escape")then escapeTarget=nil end
         if now-circleScanAt>=0.05 then
             circleScanAt=now
             local live={}
@@ -760,6 +764,17 @@ local function setupParry(makeTracker)
                 -- completed GUI warning; the filled fraction follows Quad.In.
                 if fill and fill>=0.995 then return end
                 local target=menu.Get("sae_ap_matriarch_dodge_delay")/1000
+                local large=menu.Get("sae_ap_circle_escape") and radius>=12
+                if large then
+                    local oldNeed=-math.huge
+                    if escapeTarget then
+                        oldNeed=escapeTarget.radius-math.sqrt((origin.X-escapeTarget.x)^2+(origin.Z-escapeTarget.z)^2)
+                    end
+                    if not escapeTarget or escapeTarget.record==record or radius-distance>oldNeed then
+                        escapeTarget={x=p.X,y=p.Y,z=p.Z,radius=radius,record=record,
+                            expiresAt=record.seenAt+3,fill=fill}
+                    end
+                end
                 local due=fill and fill>=menu.Get("sae_ap_circle_fill")/100
                     or not fill and age>=target and age<=target+0.25
                 inside=inside+1
@@ -768,13 +783,63 @@ local function setupParry(makeTracker)
                     print(string.format("[SAE dodge] Inside circle | radius=%.1f distance=%.1f fill=%s",
                         radius,distance,fill and string.format("%.2f",fill) or "unreadable; using delay"))
                 end
-                if due and not record.used then
+                if due and not record.used and not large then
                     threats[#threats+1]={state=record,action="dodge",distance=distance,
                         name="Matriarch danger circle",id="MatriarchTelegraph",time=age,target=target}
                 end
             end)
         end
-        return threats,inside
+        if escapeTarget then
+            local e=escapeTarget
+            local distance=math.sqrt((origin.X-e.x)^2+(origin.Z-e.z)^2)
+            if now>e.expiresAt or distance>e.radius+2 or math.abs(origin.Y-e.y)>16 then
+                escapeTarget=nil
+            else
+                -- Continue escaping briefly after the warning vanishes: the
+                -- circular sweep remains dangerous after the initial impact.
+                inside=math.max(inside,1)
+                if (now-e.record.seenAt>=0.08 or e.fill and e.fill>=0.65)
+                    and now-(e.record.usedAt or -math.huge)>=0.6 then
+                    threats[#threats+1]={state=e.record,action="dodge",distance=distance,
+                        name="Large Matriarch circle escape",id="MatriarchTelegraph",time=now-e.record.seenAt,target=0.08}
+                end
+            end
+        end
+        return threats,inside,escapeTarget
+    end
+    local function defensiveInput(bind,escape,origin,look)
+        local move=nil
+        if escape and look then
+            local manual=false
+            for _,key in ipairs({0x57,0x41,0x53,0x44})do
+                if input.IsKeyDown(key)then manual=true;break end
+            end
+            if not manual then
+                local fx,fz=look.X,look.Z
+                local length=math.sqrt(fx*fx+fz*fz)
+                if length>0.01 then
+                    fx,fz=fx/length,fz/length
+                    local dx,dz=origin.X-escape.x,origin.Z-escape.z
+                    if dx*dx+dz*dz<0.01 then dx,dz=-fx,-fz end
+                    local forward,right=dx*fx+dz*fz,-dx*fz+dz*fx
+                    if math.abs(forward)>=math.abs(right)then move=forward>=0 and 0x57 or 0x53
+                    else move=right>=0 and 0x44 or 0x41 end
+                end
+            end
+        end
+        if move==bind then move=nil end
+        if not move then
+            if bind then utility.KeyPress(bind,50)end
+            return
+        end
+        -- Each movement pulse releases its key in this invocation, including
+        -- error paths. No key remains held across script frames or unloads.
+        local ok,err=pcall(function()
+            if bind then utility.KeyDown(move);utility.KeyPress(bind,50)
+            else utility.KeyPress(move,50)end
+        end)
+        pcall(utility.KeyUp,move)
+        if not ok then error(err)end
     end
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
     local combatLogAt, clickCount = -math.huge, 0
@@ -793,7 +858,7 @@ local function setupParry(makeTracker)
             if nearestInfo ~= "" then draw.Text(20, 128, nearestInfo, {1, 1, 1, 1}, 14) end
         end
         if not menu.Get("sae_ap_enabled") then
-            circles={};circleScanAt=-math.huge
+            circles={};circleScanAt=-math.huge;escapeTarget=nil
             previousHealth=nil
             toggleActive, bindWasDown = false, false
             status = "Disabled"; state = {}; testWasDown = false; return
@@ -811,7 +876,7 @@ local function setupParry(makeTracker)
         local holdActive = mode == 2 or (mode == 1 and toggleActive) or (mode == 0 and bindDown)
         local manualAttack = menu.Get("sae_ap_manual_lmb") and input.IsKeyDown(0x01)
         if not holdActive and not manualAttack then
-            circles={};circleScanAt=-math.huge
+            circles={};circleScanAt=-math.huge;escapeTarget=nil
             previousHealth=nil
             status = mode == 1 and "Toggle OFF" or "Waiting for activation key"; testWasDown = false
             state = {}; return
@@ -950,7 +1015,7 @@ local function setupParry(makeTracker)
                 end
             end
         end
-        local circleReady,inCircle=circleThreats(now,origin)
+        local circleReady,inCircle,escape=circleThreats(now,origin)
         threatening=threatening+inCircle
         for _,candidate in ipairs(circleReady)do ready[#ready+1]=candidate end
         for key in pairs(state) do if not present[key] then state[key]=nil end end
@@ -972,15 +1037,20 @@ local function setupParry(makeTracker)
             if dodge then lastDodge=now else lastPress=now;lastParryTarget=chosen.name end
             attackAfter = now + menu.Get("sae_fight_pause") / 1000
             for _, attack in ipairs(ready) do
-                if attack.action==chosen.action then attack.state.used = true end
+                if attack.action==chosen.action then attack.state.used = true;attack.state.usedAt=now end
             end
-            utility.KeyPress(defenseKey, 50)
+            defensiveInput(defenseKey,escape,origin,look)
             if menu.Get("sae_ap_log") then
                 print(string.format("[SAE %s] %s sent | %s | animation=%s time=%.3f target=%.3f",
                     dodge and "dodge" or "parry",dodge and "Dash" or "F",
                     chosen.name,tostring(chosen.id),chosen.time,chosen.target))
             end
             status = status .. (dodge and " | Dodge sent" or " | F sent")
+            return
+        end
+        if escape then
+            status=status.." | moving out of large circle"
+            defensiveInput(nil,escape,origin,look)
             return
         end
         -- Never start an automated attack while a known enemy attack is active,
