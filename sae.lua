@@ -461,14 +461,13 @@ end
 local function GetPlayingAnimationTracks(Character)
     local AnimatorAddress = GetAnimatorAddress(Character)
     if not AnimatorAddress then
-        print("Failed to resolve Animator.")
-        return
+        return nil, "Animator not found"
     end
 
     -- Head of the linked list of active animations
     local ListHead_Ptr = memory.Read(AnimatorAddress + KnownOffsets.ActiveAnimations, "ptr")
     if not ListHead_Ptr or ListHead_Ptr == 0 then
-        return
+        return nil, "ActiveAnimations pointer unavailable"
     end
 
     -- First node (or head itself if empty)
@@ -593,7 +592,8 @@ end
 
 -- Batch update: reads, caches, fires signals, cleans up stopped tracks
 function AnimationTracker:Update(character)
-    local tracksPlaying = GetPlayingAnimationTracks(character)
+    local tracksPlaying, reason = GetPlayingAnimationTracks(character)
+    self.Status = reason or "OK"
     if not tracksPlaying then self._cachedTracks = {}; return {} end
 
     local currentAddresses = {}
@@ -665,6 +665,8 @@ local function setupParry(makeTracker)
     menu.AddSliderFloat(tab, group, "sae_ap_range", "Maximum distance", 2, 20, 10, "%.1f")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
+    menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
+    menu.AddHotkey(tab, group, "sae_ap_test", "Test parry (while holding activation)", 0x77)
     menu.AddLabel(tab, group, "Basic mobs only. Hold V in game; F must match your bind.")
     local attacks = {
         boar = {[13774059143]=true}, wolf = {[13803750988]=true},
@@ -673,15 +675,39 @@ local function setupParry(makeTracker)
     }
     local state, Tracker, failed = {}, nil, false
     local lastPress, lastPoll = -math.huge, -math.huge
+    local status, testWasDown = "Enable parry, then hold V", false
+    local nearestInfo = ""
+    menu.AddButton(tab, group, "sae_ap_retry", "Retry tracker initialization", function()
+        failed, Tracker, state = false, nil, {}
+        status = "Tracker reset; enable parry and hold activation"
+    end)
     return function()
-        if not menu.Get("sae_ap_enabled") or not input.IsKeyDown(menu.GetKey("sae_ap_hold")) then
+        if menu.Get("sae_ap_status") then
+            draw.Text(20, 110, "SAE parry: " .. status, {1, 0.85, 0.3, 1}, 14)
+            if nearestInfo ~= "" then draw.Text(20, 128, nearestInfo, {1, 1, 1, 1}, 14) end
+        end
+        if not menu.Get("sae_ap_enabled") then
+            status = "Disabled"; state = {}; testWasDown = false; return
+        end
+        if not input.IsKeyDown(menu.GetKey("sae_ap_hold")) then
+            status = "Waiting for activation key"; testWasDown = false
             state = {}; return
         end
+        local testDown = input.IsKeyDown(menu.GetKey("sae_ap_test"))
+        if testDown and not testWasDown then
+            local key = menu.GetKey("sae_ap_key")
+            if key > 0 and not input.IsKeyDown(key) then
+                utility.KeyPress(key, 50); lastPress = utility.GetTime()
+                print("[SAE parry] Test key sent: " .. key)
+            end
+        end
+        testWasDown = testDown
         if failed then return end
         if not Tracker then
             local ok, result = pcall(makeTracker)
             if not ok then
                 failed = true; menu.Set("sae_ap_enabled", false)
+                status = "Tracker initialization failed (see console)"
                 print("[SAE parry] Tracker unavailable: " .. tostring(result)); return
             end
             Tracker = result
@@ -690,11 +716,13 @@ local function setupParry(makeTracker)
         if now-lastPoll < 0.02 then return end
         lastPoll = now
         local lp = entity.GetLocalPlayer()
-        if not lp or not lp.IsAlive or not lp.Position then state = {}; return end
+        if not lp or not lp.IsAlive or not lp.Position then status = "Local player unavailable/dead"; state = {}; return end
         local origin = lp.Position
         local folder = game.Workspace:FindFirstChild("Mobs")
-        if not utility.IsValid(folder) then state = {}; return end
+        if not utility.IsValid(folder) then status = "Workspace.Mobs missing"; state = {}; return end
         local present, ready = {}, {}
+        local nearby, trackCount, matched, nearest = 0, 0, 0, math.huge
+        nearestInfo = ""
         for _, mob in ipairs(folder:GetChildren()) do
             local allowed = attacks[mob.Name:lower():gsub("^corrupted", "")]
             if allowed and mob:IsA("Model") then
@@ -704,15 +732,28 @@ local function setupParry(makeTracker)
                     local p = root.Position
                     local distance = math.sqrt((p.X-origin.X)^2+(p.Y-origin.Y)^2+(p.Z-origin.Z)^2)
                     if distance > menu.Get("sae_ap_range") then return end
+                    nearby = nearby + 1
                     local key = mob.Address
                     present[key] = true
                     local s = state[key] or {tracker=Tracker.new(), tracks={}}
                     state[key] = s
                     local active = {}
-                    for _, info in ipairs(s.tracker:Update(mob)) do
+                    local tracks = s.tracker:Update(mob)
+                    trackCount = trackCount + #tracks
+                    if distance < nearest then
+                        nearest = distance
+                        local info = tracks[1]
+                        nearestInfo = mob.Name .. " | " .. string.format("%.1f studs", distance)
+                            .. " | " .. tostring(s.tracker.Status)
+                            .. (info and (" | ID=" .. tostring(info.AnimationId) .. " t=" .. tostring(info.TimePosition)) or " | no tracks")
+                    end
+                    for _, info in ipairs(tracks) do
                         local id = tonumber(tostring(info.AnimationId):match("%d+"))
                         local t = info.TimePosition
-                        if allowed[id] and type(t)=="number" and t==t and t>=0 and info.IsPlaying~=0 then
+                        -- Use the active-list membership and bounded clip time;
+                        -- do not gate input on the unverified IsPlaying byte offset.
+                        if allowed[id] and type(t)=="number" and t==t and t>=0 then
+                            matched = matched + 1
                             local k = tostring(info.Address) .. ":" .. tostring(id)
                             active[k] = true
                             local old = s.tracks[k]
@@ -723,7 +764,7 @@ local function setupParry(makeTracker)
                             old.time = t
                             -- Clip time is used directly, so changed animation speed is reflected.
                             local target = menu.Get("sae_ap_delay")/1000
-                            if not old.used and t >= target and t <= target+0.15 then
+                            if not old.used and t >= target and t <= target+0.6 then
                                 ready[#ready+1] = {state=old, distance=distance}
                             end
                         end
@@ -739,10 +780,12 @@ local function setupParry(makeTracker)
         for key in pairs(state) do if not present[key] then state[key]=nil end end
         table.sort(ready,function(a,b) return a.distance<b.distance end)
         local key = menu.GetKey("sae_ap_key")
+        status = string.format("mobs=%d tracks=%d attacks=%d ready=%d", nearby, trackCount, matched, #ready)
         if ready[1] and now-lastPress >= 0.95 and key>0 and not input.IsKeyDown(key) then
             lastPress = now
             for _, attack in ipairs(ready) do attack.state.used = true end
             utility.KeyPress(key, 30)
+            status = status .. " | F sent"
         end
     end
 end
