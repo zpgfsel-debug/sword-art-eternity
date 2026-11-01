@@ -747,11 +747,13 @@ local function setupParry(makeTracker)
         if not utility.IsValid(folder) then status = "Workspace.Mobs missing"; state = {}; return end
         local present, ready = {}, {}
         local nearby, trackCount, matched, nearest = 0, 0, 0, math.huge
+        local threatening = 0
         local attackDistance = math.huge
         local look = camera.GetLookVector()
         nearestInfo = ""
         for _, mob in ipairs(folder:GetChildren()) do
-            local allowed = attacks[mob.Name:lower():gsub("^corrupted", "")]
+            local baseName = mob.Name:lower():gsub("[%s_%-]", ""):gsub("^corrupted", "")
+            local allowed = attacks[baseName]
             if allowed and mob:IsA("Model") then
                 local ok, err = pcall(function()
                     local root = mob:FindFirstChild("Collider") or mob:FindFirstChild("HumanoidRootPart")
@@ -785,14 +787,17 @@ local function setupParry(makeTracker)
                             active[k] = true
                             local old = s.tracks[k]
                             if not old or t < old.time-0.05 then
-                                old = {used=false, time=t}; s.tracks[k] = old
+                                old = {used=false, time=t, movedAt=now}; s.tracks[k] = old
                                 if menu.Get("sae_ap_log") then print("[SAE parry] " .. mob.Name .. " animation=" .. id .. " time=" .. t) end
                             end
+                            if t > old.time + 0.001 then old.movedAt = now end
                             old.time = t
                             old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
                             local target = menu.Get("sae_ap_delay")/1000
-                            if not old.used and t >= target and t <= target+0.6 then
+                            local moving = now - (old.movedAt or now) <= 0.15
+                            if moving and t <= target+0.9 then threatening = threatening + 1 end
+                            if moving and not old.used and t >= target and t <= target+0.6 then
                                 ready[#ready+1] = {state=old, distance=distance}
                             end
                         end
@@ -831,7 +836,12 @@ local function setupParry(makeTracker)
         end
         -- Never start an automated attack while a known enemy attack is active,
         -- during manual block, or in the recovery period after our last input.
-        if not holdActive or not menu.Get("sae_fight_enabled") or matched > 0
+        if menu.Get("sae_fight_enabled") then
+            if threatening > 0 then status = status .. " | waiting: enemy attack"
+            elseif now < attackAfter then status = status .. " | waiting: recovery"
+            elseif attackDistance == math.huge then status = status .. " | waiting: target within attack range / facing" end
+        end
+        if not holdActive or not menu.Get("sae_fight_enabled") or threatening > 0
             or now < attackAfter or attackDistance == math.huge
             or input.IsKeyDown(key) then return end
         for slot = 1, 4 do
