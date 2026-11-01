@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.2"
+local SAE_VERSION = "1.2.3"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -671,7 +671,8 @@ local function setupParry(makeTracker)
     -- Initial calibration value, not a verified server hit timestamp.
     menu.AddSliderInt(tab, group, "sae_ap_nepenthes_delay", "Nepenthes animation delay (ms)", 0, 1200, 250)
     menu.AddSliderFloat(tab, group, "sae_ap_matriarch_range", "Matriarch detection distance", 2, 80, 40, "%.1f")
-    menu.AddLabel(tab, group, "Matriarch: auto attack supported; skill parry requires calibration.")
+    menu.AddSliderInt(tab, group, "sae_ap_matriarch_cast_delay", "Matriarch cast delay (ms)", 0, 1500, 450)
+    menu.AddLabel(tab, group, "Matriarch: observed cast animation; special-attack parry is experimental.")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
@@ -682,6 +683,7 @@ local function setupParry(makeTracker)
     menu.AddCheckbox(tab, fight, "sae_fight_enabled", "Auto attack while active", false)
     menu.AddCheckbox(tab, fight, "sae_fight_lmb", "Use LMB attacks", true)
     menu.AddSliderFloat(tab, fight, "sae_fight_range", "Attack distance", 2, 12, 7, "%.1f")
+    menu.AddSliderFloat(tab, fight, "sae_fight_matriarch_range", "Matriarch attack distance", 2, 15, 14, "%.1f")
     menu.AddSliderInt(tab, fight, "sae_fight_interval", "LMB interval (ms)", 150, 1500, 400)
     menu.AddSliderInt(tab, fight, "sae_fight_pause", "Pause after parry (ms)", 400, 2000, 700)
     for slot = 1, 4 do
@@ -697,10 +699,11 @@ local function setupParry(makeTracker)
         nepenthes = {[116371641636454]=true}, windwasp = {[94230248318965]=true},
     }
     attacks.littlenepenthes = attacks.nepenthes
-    -- Matriarch uses skills. Do not reuse the normal Nepenthes bite whitelist.
+    -- Confirmed in the user's Matriarch combat log. The same animation ID is
+    -- reused for casts; the log does not establish that every skill is parryable.
     local matriarchNames={nepenthesmatriarch=true,littlematriarch=true,
         littlenepenthesmatriarch=true,matriarch=true}
-    for name in pairs(matriarchNames)do attacks[name]={} end
+    for name in pairs(matriarchNames)do attacks[name]={[116371641636454]=true} end
     local state, Tracker, failed = {}, nil, false
     local lastPress = -math.huge
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
@@ -833,7 +836,8 @@ local function setupParry(makeTracker)
                             old.time = t
                             old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
-                            local target = (plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
+                            local target = (matriarch and menu.Get("sae_ap_matriarch_cast_delay")
+                                or plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
                             local moving = now - (old.movedAt or now) <= 0.15
                             if moving and t <= target+0.9 then threatening = threatening + 1 end
                             if moving and not old.used and t >= target and t <= target+0.6 then
@@ -845,7 +849,8 @@ local function setupParry(makeTracker)
                     for k, record in pairs(s.tracks) do
                         if not active[k] and now-(record.lastSeen or now)>0.15 then s.tracks[k]=nil end
                     end
-                    if distance <= menu.Get("sae_fight_range") and distance > 0.01 and look then
+                    local attackRange=matriarch and menu.Get("sae_fight_matriarch_range") or menu.Get("sae_fight_range")
+                    if distance <= attackRange and distance > 0.01 and look then
                         local dot = ((p.X-origin.X)*look.X+(p.Y-origin.Y)*look.Y+(p.Z-origin.Z)*look.Z)/distance
                         if dot >= 0.5 and s.tracker.Status == "OK" then
                             attackDistance = math.min(attackDistance, distance)
@@ -897,8 +902,8 @@ local function setupParry(makeTracker)
             elseif not menu.Get("sae_fight_lmb") then reason = "auto LMB OFF"
             elseif input.IsKeyDown(0x01) then reason = "manual LMB held"
             else reason = "auto LMB ready" end
-            print(string.format("[SAE combat] %s | range=%.1f | LMB sent=%d | %s",
-                reason, menu.Get("sae_fight_range"), clickCount, nearestInfo))
+            print(string.format("[SAE combat] %s | range=%.1f matriarchRange=%.1f | LMB sent=%d | %s",
+                reason, menu.Get("sae_fight_range"), menu.Get("sae_fight_matriarch_range"), clickCount, nearestInfo))
         end
         if not holdActive or not menu.Get("sae_fight_enabled") or threatening > 0
             or now < attackAfter or attackDistance == math.huge
