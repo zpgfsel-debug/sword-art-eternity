@@ -1,7 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
--- Version: first GitHub publication = 1.0; each update increments the minor
--- digit, with 1.9 -> 2.0. Initial line-ending-only commit is excluded.
-local SAE_VERSION = "2.3"
+-- Version format selected by the user: major.minor.patch.
+local SAE_VERSION = "1.1.3"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
