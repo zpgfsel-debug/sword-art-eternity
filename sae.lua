@@ -655,18 +655,19 @@ local function setupParry(makeTracker)
     local tab, group = "SAO", "Auto parry (experimental)"
     menu.AddGroup(tab, group)
     menu.AddCheckbox(tab, group, "sae_ap_enabled", "Enable auto parry", false)
-    menu.AddHotkey(tab, group, "sae_ap_hold", "Hold to activate", 0x56)
+    menu.AddHotkey(tab, group, "sae_ap_hold", "Activation key", 0x56)
+    menu.AddCombo(tab, group, "sae_ap_mode", "Activation mode", {"Hold", "Toggle", "Always"}, 0)
     menu.AddCheckbox(tab, group, "sae_ap_manual_lmb", "Also activate while holding LMB", true)
     menu.AddHotkey(tab, group, "sae_ap_key", "Block / parry key", 0x46)
     menu.AddSliderFloat(tab, group, "sae_ap_range", "Maximum distance", 2, 20, 10, "%.1f")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
-    menu.AddHotkey(tab, group, "sae_ap_test", "Test parry (while holding activation)", 0x77)
-    menu.AddLabel(tab, group, "Basic mobs. Hold V or LMB; match parry key to your bind.")
-    local fight = "Hold combat"
+    menu.AddHotkey(tab, group, "sae_ap_test", "Test parry (while active)", 0x77)
+    menu.AddLabel(tab, group, "Activation mode applies to parry and auto attacks. LMB option also activates parry.")
+    local fight = "Auto combat"
     menu.AddGroup(tab, fight)
-    menu.AddCheckbox(tab, fight, "sae_fight_enabled", "Auto attack while holding activation", false)
+    menu.AddCheckbox(tab, fight, "sae_fight_enabled", "Auto attack while active", false)
     menu.AddCheckbox(tab, fight, "sae_fight_lmb", "Use LMB attacks", true)
     menu.AddSliderFloat(tab, fight, "sae_fight_range", "Attack distance", 2, 12, 7, "%.1f")
     menu.AddSliderInt(tab, fight, "sae_fight_interval", "LMB interval (ms)", 150, 1500, 400)
@@ -688,6 +689,7 @@ local function setupParry(makeTracker)
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
     local status, testWasDown = "Enable parry, then hold V", false
     local nearestInfo = ""
+    local toggleActive, bindWasDown, previousMode, previousBind = false, false, nil, nil
     menu.AddButton(tab, group, "sae_ap_retry", "Retry tracker initialization", function()
         failed, Tracker, state = false, nil, {}
         status = "Tracker reset; enable parry and hold activation"
@@ -698,12 +700,23 @@ local function setupParry(makeTracker)
             if nearestInfo ~= "" then draw.Text(20, 128, nearestInfo, {1, 1, 1, 1}, 14) end
         end
         if not menu.Get("sae_ap_enabled") then
+            toggleActive, bindWasDown = false, false
             status = "Disabled"; state = {}; testWasDown = false; return
         end
-        local holdActive = input.IsKeyDown(menu.GetKey("sae_ap_hold"))
+        local mode, bind = menu.Get("sae_ap_mode"), menu.GetKey("sae_ap_hold")
+        local bindDown = bind > 0 and input.IsKeyDown(bind)
+        if mode ~= previousMode or bind ~= previousBind then
+            toggleActive = false
+            -- Changing mode/bind while holding a key is not a Toggle press.
+            bindWasDown = bindDown
+            previousMode, previousBind = mode, bind
+        end
+        if mode == 1 and bindDown and not bindWasDown then toggleActive = not toggleActive end
+        bindWasDown = bindDown
+        local holdActive = mode == 2 or (mode == 1 and toggleActive) or (mode == 0 and bindDown)
         local manualAttack = menu.Get("sae_ap_manual_lmb") and input.IsKeyDown(0x01)
         if not holdActive and not manualAttack then
-            status = "Waiting for activation key"; testWasDown = false
+            status = mode == 1 and "Toggle OFF" or "Waiting for activation key"; testWasDown = false
             state = {}; return
         end
         local testDown = holdActive and input.IsKeyDown(menu.GetKey("sae_ap_test"))
