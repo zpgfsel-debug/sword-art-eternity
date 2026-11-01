@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.1.4"
+local SAE_VERSION = "1.1.5"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -1017,6 +1017,47 @@ local function setupStaminaDiagnostics()
     menu.AddLabel(TAB,group,"Scan, spend stamina, then scan again to compare values.")
     local scanning=false
     local previous=nil
+    local dashOriginal,dashTable=nil,nil
+    local function dashTest(restore)
+        if scanning then return end
+        scanning=true
+        local ok,err=pcall(function()
+            assert(type(getgc)=="function" and type(setgc)=="function","Vector GC APIs unavailable")
+            -- setgc writes every selected entry: a fresh, single-key scan is mandatory.
+            local matches,scanError=getgc("staminaCost",false)
+            assert(not scanError,tostring(scanError))
+            assert(type(matches)=="table" and #matches==1,"Expected exactly one staminaCost; refusing ambiguous write")
+            local match=matches[1]
+            local value=match.fields and match.fields.staminaCost
+            assert(not match.constant,"Expected a table field, not a constant")
+            local target
+            if restore then
+                assert(dashOriginal~=nil,"No saved original in this script session; rejoin to reset game config")
+                assert(match.table==dashTable,"Table changed; original experiment target is no longer available")
+                assert(value==0 or value==dashOriginal,"Value changed externally; not overwriting")
+                target=dashOriginal
+            else
+                if value==0 and match.table==dashTable then
+                    print("[SAE stamina] Dash test already applied");return
+                end
+                assert(value==10,"Expected known dash cost 10; refusing unknown value "..tostring(value))
+                dashOriginal,dashTable=value,match.table
+                target=0
+            end
+            local written=setgc("staminaCost",target)
+            assert(written==1,"Unexpected write count: "..tostring(written))
+            local check,readError=getgc("staminaCost",false)
+            assert(not readError and type(check)=="table" and #check==1
+                and check[1].table==dashTable and check[1].fields.staminaCost==target,"Read-back verification failed")
+            print("[SAE stamina] Client dash cost="..target.." verified. Server stamina behavior is not yet established.")
+            if restore then dashOriginal,dashTable=nil,nil end
+        end)
+        scanning=false
+        if not ok then print("[SAE stamina] Dash test stopped: "..tostring(err))end
+    end
+    menu.AddButton(TAB,group,"sae_stamina_dash_test","Test: zero client dash cost",function()dashTest(false)end)
+    menu.AddButton(TAB,group,"sae_stamina_dash_restore","Restore original dash cost",function()dashTest(true)end)
+    menu.AddLabel(TAB,group,"Restore before reloading this script, or rejoin to reset the game config.")
     menu.AddButton(TAB,group,"sae_stamina_scan","Scan stamina parameters",function()
         if scanning then return end
         scanning=true
