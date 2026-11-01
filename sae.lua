@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.1.5"
+local SAE_VERSION = "1.1.6"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -1040,8 +1040,8 @@ local function setupStaminaDiagnostics()
                 if value==0 and match.table==dashTable then
                     print("[SAE stamina] Dash test already applied");return
                 end
-                assert(value==10,"Expected known dash cost 10; refusing unknown value "..tostring(value))
-                dashOriginal,dashTable=value,match.table
+                assert(value==10 or value==0,"Expected known dash cost 10 or prior test 0; refusing unknown value "..tostring(value))
+                dashOriginal,dashTable=10,match.table
                 target=0
             end
             local written=setgc("staminaCost",target)
@@ -1054,7 +1054,72 @@ local function setupStaminaDiagnostics()
         end)
         scanning=false
         if not ok then print("[SAE stamina] Dash test stopped: "..tostring(err))end
+        return ok
     end
+    local resourceGroup="Stamina options"
+    menu.AddGroup(TAB,resourceGroup)
+    menu.AddCheckbox(TAB,resourceGroup,"sae_zero_dash","Allow dash at zero stamina",false)
+    menu.SetCallback("sae_zero_dash",function(enabled)
+        if not dashTest(not enabled)then menu.Set("sae_zero_dash",not enabled)end
+    end)
+    local blockTable=nil
+    local function blockTest(restore)
+        if scanning then return false end
+        scanning=true
+        local ok,err=pcall(function()
+            assert(type(getgc)=="function" and type(setgc)=="function","Vector GC APIs unavailable")
+            local keys={"staminaPerDamage","staminaDrainPerSecond"}
+            local matches,e=getgc(keys,false)
+            assert(not e and type(matches)=="table" and #matches==1,"Expected one block configuration")
+            local m=matches[1];local fields=m.fields or {}
+            assert(not m.constant and (not restore or not blockTable or blockTable==m.table),"Block table changed")
+            assert((fields.staminaPerDamage==0.35 or fields.staminaPerDamage==0)
+                and (fields.staminaDrainPerSecond==1.5 or fields.staminaDrainPerSecond==0),"Unknown block costs")
+            blockTable=m.table
+            local target={staminaPerDamage=restore and 0.35 or 0,staminaDrainPerSecond=restore and 1.5 or 0}
+            setgc(target)
+            local check,re=getgc(keys,false)
+            assert(not re and type(check)=="table" and #check==1 and check[1].table==blockTable
+                and check[1].fields.staminaPerDamage==target.staminaPerDamage
+                and check[1].fields.staminaDrainPerSecond==target.staminaDrainPerSecond,"Block read-back failed")
+            print("[SAE stamina] Client block costs "..(restore and "restored" or "zeroed")..". Test real consumption and blocking at zero.")
+        end)
+        scanning=false
+        if not ok then print("[SAE stamina] Block test stopped: "..tostring(err))end
+        return ok
+    end
+    menu.AddCheckbox(TAB,resourceGroup,"sae_zero_block","Test: zero client block costs",false)
+    menu.SetCallback("sae_zero_block",function(enabled)
+        if not blockTest(not enabled)then menu.Set("sae_zero_block",not enabled)end
+    end)
+    local function skillsTest()
+        if scanning then return false end
+        scanning=true
+        local ok,err=pcall(function()
+            local matches,e=getgc("Stamina",false)
+            assert(not e and type(matches)=="table" and #matches==97,"Skill-cost count changed; expected the 97 observed records")
+            for _,m in ipairs(matches)do
+                local v=m.fields and m.fields.Stamina
+                assert(not m.constant and type(v)=="number" and v>=0 and v<=1000,"Unexpected Stamina record")
+            end
+            setgc("Stamina",0)
+            local check,re=getgc("Stamina",false)
+            assert(not re and type(check)=="table" and #check==97,"Skill read-back scan failed")
+            for _,m in ipairs(check)do assert(m.fields.Stamina==0,"Skill cost write failed")end
+            print("[SAE stamina] 97 client Stamina fields zeroed. Test skill use at zero. Rejoin to restore original individual costs.")
+        end)
+        scanning=false
+        if not ok then print("[SAE stamina] Skill test stopped: "..tostring(err))end
+        return ok
+    end
+    menu.AddButton(TAB,resourceGroup,"sae_zero_skills","Test: zero client skill costs (reset by rejoin)",skillsTest)
+    menu.AddButton(TAB,resourceGroup,"sae_zero_all","Apply dash + block + skill tests",function()
+        if dashTest(false)then menu.Set("sae_zero_dash",true)else return end
+        if blockTest(false)then menu.Set("sae_zero_block",true)else return end
+        skillsTest()
+    end)
+    menu.AddLabel(TAB,resourceGroup,"Dash at zero confirmed. Block/skills experimental; stamina may still drain.")
+    menu.AddLabel(TAB,resourceGroup,"Skills have different original costs: rejoin to restore them. Basic attack cost is not patched.")
     menu.AddButton(TAB,group,"sae_stamina_dash_test","Test: zero client dash cost",function()dashTest(false)end)
     menu.AddButton(TAB,group,"sae_stamina_dash_restore","Restore original dash cost",function()dashTest(true)end)
     menu.AddLabel(TAB,group,"Restore before reloading this script, or rejoin to reset the game config.")
