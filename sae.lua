@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.1.7"
+local SAE_VERSION = "1.1.8"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -36,12 +36,13 @@ for _, name in ipairs(MOB_TYPES) do
 end
 typeIds.illfangblade = typeIds.illfang
 typeIds.minotaurboss = typeIds.minotaur
+typeIds.littlenepenthes = typeIds.nepenthes
 menu.AddCheckbox(TAB, "Mob types", "sao_mob_other", "Other / unknown mobs", true)
 
 local function mobTypeId(name)
     -- Share the base toggle for every Corrupted<BaseName> variant.
     -- CorruptedMiniboss has no confirmed base species; keep it under Other.
-    local base = name:lower():gsub("^corrupted", "")
+    local base = name:lower():gsub("[%s_%-]", ""):gsub("^corrupted", "")
     return typeIds[base] or "sao_mob_other"
 end
 
@@ -663,6 +664,7 @@ local function setupParry(makeTracker)
     menu.AddCheckbox(tab, group, "sae_ap_manual_lmb", "Also activate while holding LMB", true)
     menu.AddHotkey(tab, group, "sae_ap_key", "Block / parry key", 0x46)
     menu.AddSliderFloat(tab, group, "sae_ap_range", "Maximum distance", 2, 20, 10, "%.1f")
+    menu.AddSliderFloat(tab, group, "sae_ap_nepenthes_range", "Nepenthes detection distance", 2, 25, 15, "%.1f")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
@@ -687,6 +689,7 @@ local function setupParry(makeTracker)
         koboldtrooper = {[13803854864]=true}, koboldsentinel = {[13803854864]=true},
         nepenthes = {[116371641636454]=true}, windwasp = {[94230248318965]=true},
     }
+    attacks.littlenepenthes = attacks.nepenthes
     local state, Tracker, failed = {}, nil, false
     local lastPress = -math.huge
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
@@ -764,7 +767,9 @@ local function setupParry(makeTracker)
                     if not utility.IsValid(root) or not root.Position then return end
                     local p = root.Position
                     local distance = math.sqrt((p.X-origin.X)^2+(p.Y-origin.Y)^2+(p.Z-origin.Z)^2)
-                    if distance > menu.Get("sae_ap_range") then return end
+                    local plant = baseName=="nepenthes" or baseName=="littlenepenthes"
+                    local detectionRange = plant and menu.Get("sae_ap_nepenthes_range") or menu.Get("sae_ap_range")
+                    if distance > detectionRange then return end
                     nearby = nearby + 1
                     local key = mob.Address
                     present[key] = true
@@ -775,10 +780,14 @@ local function setupParry(makeTracker)
                     trackCount = trackCount + #tracks
                     if distance < nearest then
                         nearest = distance
-                        local info = tracks[1]
+                        local trackLabels={}
+                        for i,info in ipairs(tracks) do
+                            if i>6 then break end
+                            trackLabels[#trackLabels+1]=tostring(info.AnimationId).." @"..tostring(info.TimePosition)
+                        end
                         nearestInfo = mob.Name .. " | " .. string.format("%.1f studs", distance)
                             .. " | " .. tostring(s.tracker.Status)
-                            .. (info and (" | ID=" .. tostring(info.AnimationId) .. " t=" .. tostring(info.TimePosition)) or " | no tracks")
+                            .. (#trackLabels>0 and (" | animations: "..table.concat(trackLabels,", ")) or " | no tracks")
                     end
                     for _, info in ipairs(tracks) do
                         local id = tonumber(tostring(info.AnimationId):match("%d+"))
