@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.1.9"
+local SAE_VERSION = "1.2.0"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -664,7 +664,7 @@ local function setupParry(makeTracker)
     menu.AddCheckbox(tab, group, "sae_ap_manual_lmb", "Also activate while holding LMB", true)
     menu.AddHotkey(tab, group, "sae_ap_key", "Block / parry key", 0x46)
     menu.AddSliderFloat(tab, group, "sae_ap_range", "Maximum distance", 2, 20, 10, "%.1f")
-    menu.AddSliderFloat(tab, group, "sae_ap_nepenthes_range", "Nepenthes detection distance", 2, 25, 15, "%.1f")
+    menu.AddSliderFloat(tab, group, "sae_ap_nepenthes_range", "Nepenthes detection distance", 2, 60, 30, "%.1f")
     -- Initial calibration value, not a verified server hit timestamp.
     menu.AddSliderInt(tab, group, "sae_ap_nepenthes_delay", "Nepenthes animation delay (ms)", 0, 1200, 250)
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
