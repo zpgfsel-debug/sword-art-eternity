@@ -1,4 +1,8 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
+-- Version: first GitHub publication = 1.0; functional updates/fixes increment
+-- the minor counter. The initial line-ending-only commit is excluded.
+local SAE_VERSION = "1.13"
+local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
 local TAB, GROUP = "SAO", "Mob ESP"
@@ -262,7 +266,7 @@ OnFrame = function()
         print("[SAO Ore ESP] " .. tostring(oreError))
     end
 end
-print("[SAO] Mob and Ore ESP loaded. Open SAO > Mob ESP / Ore ESP.")
+print("[SAO] " .. SAE_TITLE .. " loaded. Open SAO for settings.")
 
 local function makeSAETracker()
 -- AnimationTracker for Project Vector
@@ -1290,6 +1294,12 @@ local zoneFrame = setupZoneESP()
 local zoneErrorAt = -math.huge
 local parryFrame = setupParry(makeSAETracker)
 local espFrame = OnFrame
+local function watermarkFrame()
+    local screenWidth, screenHeight = draw.GetScreenSize()
+    if type(screenWidth)~="number" or type(screenHeight)~="number" or screenWidth<=0 or screenHeight<=0 then return end
+    local width=draw.GetTextSize(SAE_TITLE,16)
+    draw.Text(math.max(8,screenWidth-width-20),20,SAE_TITLE,{0.5,0.88,1,1},16)
+end
 OnFrame = function()
     local ok, err = pcall(parryFrame)
     if not ok then
@@ -1312,4 +1322,5 @@ OnFrame = function()
         zoneErrorAt = utility.GetTime()
         print("[SAE zone ESP] "..tostring(zoneError))
     end
+    pcall(watermarkFrame)
 end
