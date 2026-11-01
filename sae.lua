@@ -656,13 +656,28 @@ local function setupParry(makeTracker)
     menu.AddGroup(tab, group)
     menu.AddCheckbox(tab, group, "sae_ap_enabled", "Enable auto parry", false)
     menu.AddHotkey(tab, group, "sae_ap_hold", "Hold to activate", 0x56)
+    menu.AddCheckbox(tab, group, "sae_ap_manual_lmb", "Also activate while holding LMB", true)
     menu.AddHotkey(tab, group, "sae_ap_key", "Block / parry key", 0x46)
     menu.AddSliderFloat(tab, group, "sae_ap_range", "Maximum distance", 2, 20, 10, "%.1f")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
     menu.AddHotkey(tab, group, "sae_ap_test", "Test parry (while holding activation)", 0x77)
-    menu.AddLabel(tab, group, "Basic mobs only. Hold V in game; F must match your bind.")
+    menu.AddLabel(tab, group, "Basic mobs. Hold V or LMB; match parry key to your bind.")
+    local fight = "Hold combat"
+    menu.AddGroup(tab, fight)
+    menu.AddCheckbox(tab, fight, "sae_fight_enabled", "Auto attack while holding activation", false)
+    menu.AddCheckbox(tab, fight, "sae_fight_lmb", "Use LMB attacks", true)
+    menu.AddSliderFloat(tab, fight, "sae_fight_range", "Attack distance", 2, 12, 7, "%.1f")
+    menu.AddSliderInt(tab, fight, "sae_fight_interval", "LMB interval (ms)", 150, 1500, 400)
+    menu.AddSliderInt(tab, fight, "sae_fight_pause", "Pause after parry (ms)", 400, 2000, 700)
+    for slot = 1, 4 do
+        menu.AddCheckbox(tab, fight, "sae_fight_skill" .. slot, "Use skill " .. slot, false)
+        menu.AddHotkey(tab, fight, "sae_fight_bind" .. slot, "Skill " .. slot .. " key", 0x30 + slot)
+    end
+    menu.AddSliderFloat(tab, fight, "sae_fight_skill_interval", "Retry same skill after (s)", 2, 60, 10, "%.1f")
+    menu.AddSliderInt(tab, fight, "sae_fight_skill_pause", "Pause attacks after skill (ms)", 300, 4000, 1200)
+    menu.AddLabel(tab, fight, "Face your target. Skills may prevent parry during their animation.")
     local attacks = {
         boar = {[13774059143]=true}, wolf = {[13803750988]=true},
         koboldtrooper = {[13803854864]=true}, koboldsentinel = {[13803854864]=true},
@@ -670,6 +685,7 @@ local function setupParry(makeTracker)
     }
     local state, Tracker, failed = {}, nil, false
     local lastPress, lastPoll = -math.huge, -math.huge
+    local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
     local status, testWasDown = "Enable parry, then hold V", false
     local nearestInfo = ""
     menu.AddButton(tab, group, "sae_ap_retry", "Retry tracker initialization", function()
@@ -684,15 +700,18 @@ local function setupParry(makeTracker)
         if not menu.Get("sae_ap_enabled") then
             status = "Disabled"; state = {}; testWasDown = false; return
         end
-        if not input.IsKeyDown(menu.GetKey("sae_ap_hold")) then
+        local holdActive = input.IsKeyDown(menu.GetKey("sae_ap_hold"))
+        local manualAttack = menu.Get("sae_ap_manual_lmb") and input.IsKeyDown(0x01)
+        if not holdActive and not manualAttack then
             status = "Waiting for activation key"; testWasDown = false
             state = {}; return
         end
-        local testDown = input.IsKeyDown(menu.GetKey("sae_ap_test"))
+        local testDown = holdActive and input.IsKeyDown(menu.GetKey("sae_ap_test"))
         if testDown and not testWasDown then
             local key = menu.GetKey("sae_ap_key")
             if key > 0 and not input.IsKeyDown(key) then
                 utility.KeyPress(key, 50); lastPress = utility.GetTime()
+                attackAfter = lastPress + menu.Get("sae_fight_pause") / 1000
                 print("[SAE parry] Test key sent: " .. key)
             end
         end
@@ -717,6 +736,8 @@ local function setupParry(makeTracker)
         if not utility.IsValid(folder) then status = "Workspace.Mobs missing"; state = {}; return end
         local present, ready = {}, {}
         local nearby, trackCount, matched, nearest = 0, 0, 0, math.huge
+        local attackDistance = math.huge
+        local look = camera.GetLookVector()
         nearestInfo = ""
         for _, mob in ipairs(folder:GetChildren()) do
             local allowed = attacks[mob.Name:lower():gsub("^corrupted", "")]
@@ -765,6 +786,12 @@ local function setupParry(makeTracker)
                         end
                     end
                     for k in pairs(s.tracks) do if not active[k] then s.tracks[k]=nil end end
+                    if distance <= menu.Get("sae_fight_range") and distance > 0.01 and look then
+                        local dot = ((p.X-origin.X)*look.X+(p.Y-origin.Y)*look.Y+(p.Z-origin.Z)*look.Z)/distance
+                        if dot >= 0.5 and s.tracker.Status == "OK" then
+                            attackDistance = math.min(attackDistance, distance)
+                        end
+                    end
                 end)
                 if not ok then
                     failed = true; menu.Set("sae_ap_enabled", false)
@@ -778,9 +805,34 @@ local function setupParry(makeTracker)
         status = string.format("mobs=%d tracks=%d attacks=%d ready=%d", nearby, trackCount, matched, #ready)
         if ready[1] and now-lastPress >= 0.95 and key>0 and not input.IsKeyDown(key) then
             lastPress = now
+            attackAfter = now + menu.Get("sae_fight_pause") / 1000
             for _, attack in ipairs(ready) do attack.state.used = true end
             utility.KeyPress(key, 30)
             status = status .. " | F sent"
+            return
+        end
+        -- Never start an automated attack while a known enemy attack is active,
+        -- during manual block, or in the recovery period after our last input.
+        if not holdActive or not menu.Get("sae_fight_enabled") or matched > 0
+            or now < attackAfter or attackDistance == math.huge
+            or input.IsKeyDown(key) then return end
+        for slot = 1, 4 do
+            if menu.Get("sae_fight_skill" .. slot)
+                and now - (lastSkill[slot] or -math.huge) >= menu.Get("sae_fight_skill_interval") then
+                local skillKey = menu.GetKey("sae_fight_bind" .. slot)
+                if skillKey > 0 and skillKey ~= key and skillKey ~= menu.GetKey("sae_ap_hold")
+                    and not input.IsKeyDown(skillKey) then
+                    lastSkill[slot] = now
+                    attackAfter = now + menu.Get("sae_fight_skill_pause") / 1000
+                    utility.KeyPress(skillKey, 30)
+                    return
+                end
+            end
+        end
+        if menu.Get("sae_fight_lmb") and not input.IsKeyDown(0x01)
+            and now-lastClick >= menu.Get("sae_fight_interval")/1000 then
+            lastClick = now
+            utility.MouseClick("left")
         end
     end
 end
