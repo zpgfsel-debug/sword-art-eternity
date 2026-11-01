@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.8"
+local SAE_VERSION = "1.2.9"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 local function showError(message)
     if notify and type(notify.Error)=="function" then pcall(notify.Error,message) end
@@ -182,9 +182,12 @@ menu.AddCheckbox(TAB, "Ore ESP", "sao_ore_depleted", "Show depleted nodes", fals
 menu.AddSliderInt(TAB, "Ore ESP", "sao_ore_range", "Maximum distance", 25, 5000, 1000, "%d studs")
 menu.AddSliderInt(TAB, "Ore ESP", "sao_ore_limit", "Maximum labels", 1, 150, 50)
 menu.AddSliderInt(TAB, "Ore ESP", "sao_ore_font", "Font size", 10, 24, 14)
-for _, ore in ipairs(ORES) do
-    menu.AddCheckbox(TAB, "Ore ESP", "sao_ore_" .. ore[1], ore[2], true)
+local oreTypeIndices,oreTypeNames,oreTypeDefaults={},{},{}
+for index, ore in ipairs(ORES) do
+    oreTypeIndices[ore[1]]=index
+    oreTypeNames[index],oreTypeDefaults[index]=ore[2],true
 end
+menu.AddMulticombo(TAB,"Ore ESP","sao_ore_types","Ore types",oreTypeNames,oreTypeDefaults)
 local oreNodes, oreScanAt = {}, -math.huge
 local function scanOres()
     local found = {}
@@ -214,8 +217,9 @@ local function oreFrame()
     local ox, oy, oz = xyz(lp and lp.Position)
     if not ox then return end
     local candidates = {}
+    local selectedOres=menu.Get("sao_ore_types") or {}
     for _, entry in ipairs(oreNodes) do
-        if get("ore_" .. entry.definition[1]) then
+        if selectedOres[oreTypeIndices[entry.definition[1]]] then
             local ok, x, y, z, depleted = pcall(function()
                 local node = entry.model
                 if not utility.IsValid(node) or not node.Parent then return end
@@ -1014,8 +1018,10 @@ local function setupLootESP()
     menu.AddCheckbox(TAB,group,"sae_loot_enabled","Enable chest / pickup ESP",true)
     local categories={Chest={"Treasure chests",{1,0.8,0.2,1}},
         Storage={"Inn storage",{0.6,0.7,1,1}},Pickup={"Story pickups",{0.4,1,0.65,1}}}
+    local lootIndices={Chest=1,Storage=2,Pickup=3}
+    menu.AddMulticombo(TAB,group,"sae_loot_types","Loot types",
+        {categories.Chest[1],categories.Storage[1],categories.Pickup[1]},{true,true,true})
     for _,kind in ipairs({"Chest","Storage","Pickup"})do
-        menu.AddCheckbox(TAB,group,"sae_loot_"..kind,categories[kind][1],true)
         menu.AddColorpicker(TAB,group,"sae_loot_color_"..kind,categories[kind][1].." color",categories[kind][2])
     end
     menu.AddCheckbox(TAB,group,"sae_loot_hide_inactive","Hide disabled / collected",true)
@@ -1082,8 +1088,9 @@ local function setupLootESP()
         local ox,oy,oz=xyz(lp and lp.Position)
         if not ox then return end
         local points={}
+        local selectedLoot=menu.Get("sae_loot_types") or {}
         for _,entry in ipairs(candidates)do
-            if menu.Get("sae_loot_"..entry.kind)then
+            if selectedLoot[lootIndices[entry.kind]]then
                 local ok,x,y,z,label=pcall(function()
                     if not utility.IsValid(entry.part) or not entry.part.Parent
                         or not utility.IsValid(entry.prompt) or not entry.prompt.Parent then return end
@@ -1180,9 +1187,12 @@ local function setupNPCESP()
         Blacksmith={"Blacksmiths",{1,0.5,0.25,1}},
         Cooking={"Cooking fires",{1,0.35,0.3,1}},
     }
+    local npcIndices={Trader=1,Quest=2,Blacksmith=3,Cooking=4}
+    menu.AddMulticombo(TAB,group,"sae_npc_types","NPC types",
+        {categories.Trader[1],categories.Quest[1],categories.Blacksmith[1],categories.Cooking[1]},
+        {true,true,true,true})
     for _, category in ipairs({"Trader","Quest","Blacksmith","Cooking"}) do
         local definition=categories[category]
-        menu.AddCheckbox(TAB,group,"sae_npc_"..category,definition[1],true)
         menu.AddColorpicker(TAB,group,"sae_npc_color_"..category,definition[1].." color",definition[2])
     end
     -- Filled from the dump: exact ancestor names, including empty names.
@@ -1291,8 +1301,9 @@ local function setupNPCESP()
         local ox,oy,oz=xyz(lp and lp.Position)
         if not ox then return end
         local points={}
+        local selectedNPCs=menu.Get("sae_npc_types") or {}
         for _, entry in ipairs(candidates) do
-            if menu.Get("sae_npc_"..entry.category) then
+            if selectedNPCs[npcIndices[entry.category]] then
                 local ok,x,y,z=pcall(function()
                     if utility.IsValid(entry.root) and utility.IsValid(entry.prompt)
                         and entry.root.Parent and entry.prompt.Parent then return xyz(entry.root.Position) end
@@ -1330,6 +1341,11 @@ local function setupZoneESP()
     local group = "Mob zones ESP"
     menu.AddGroup(TAB, group)
     menu.AddCheckbox(TAB, group, "sae_zones_enabled", "Enable mob zones ESP", true)
+    local zoneTypes={"Starter Plains","West Field","North Plains","North West Hollow",
+        "Lakeside","Temple Fields","Horunka Forest","Haunted Peak","Other zones"}
+    local zoneIndices,zoneDefaults={},{}
+    for i,name in ipairs(zoneTypes)do zoneIndices[name]=i;zoneDefaults[i]=true end
+    menu.AddMulticombo(TAB,group,"sae_zone_types","Areas",zoneTypes,zoneDefaults)
     menu.AddSliderInt(TAB, group, "sae_zones_range", "Maximum distance", 100, 15000, 5000, "%d studs")
     menu.AddSliderInt(TAB, group, "sae_zones_limit", "Maximum labels", 1, 50, 20)
     menu.AddSliderInt(TAB, group, "sae_zones_font", "Font size", 10, 24, 14)
@@ -1366,11 +1382,12 @@ local function setupZoneESP()
         local ox, oy, oz = xyz(lp and lp.Position)
         if not ox then return end
         local grouped = {}
+        local selectedZones=menu.Get("sae_zone_types") or {}
         for _, zone in ipairs(zones) do
             local ok, x, y, z = pcall(function()
                 if utility.IsValid(zone.part) and zone.part.Parent then return xyz(zone.part.Position) end
             end)
-            if ok and x then
+            if ok and x and selectedZones[zoneIndices[zone.area] or #zoneTypes] then
                 local distance = math.sqrt((x-ox)^2+(y-oy)^2+(z-oz)^2)
                 if distance <= menu.Get("sae_zones_range") then
                     -- Co-located zones with the same level range share one label.
