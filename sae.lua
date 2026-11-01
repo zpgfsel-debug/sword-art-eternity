@@ -1,7 +1,10 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.7"
+local SAE_VERSION = "1.2.8"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
+local function showError(message)
+    if notify and type(notify.Error)=="function" then pcall(notify.Error,message) end
+end
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
 local TAB, GROUP = "SAO", "Mob ESP"
@@ -27,12 +30,10 @@ local MOB_TYPES = {
     "FrostQueen", "FrostTyrant", "SnowApeKing", "EliteTaurusSentinel",
     "Minotaur", "Illfang", "GrimReaper", "SwampMantis", "BogToad", "MireMosquito",
 }
-local typeIds = {}
-menu.AddGroup(TAB, "Mob types")
-for _, name in ipairs(MOB_TYPES) do
-    local id = "sao_mob_" .. name:lower()
-    typeIds[name:lower()] = id
-    menu.AddCheckbox(TAB, "Mob types", id, name, true)
+local typeIds, typeDefaults = {}, {}
+for index, name in ipairs(MOB_TYPES) do
+    typeIds[name:lower()] = index
+    typeDefaults[index] = true
 end
 typeIds.illfangblade = typeIds.illfang
 typeIds.minotaurboss = typeIds.minotaur
@@ -40,13 +41,16 @@ typeIds.littlenepenthes = typeIds.nepenthes
 typeIds.matriarch = typeIds.nepenthesmatriarch
 typeIds.littlematriarch = typeIds.nepenthesmatriarch
 typeIds.littlenepenthesmatriarch = typeIds.nepenthesmatriarch
-menu.AddCheckbox(TAB, "Mob types", "sao_mob_other", "Other / unknown mobs", true)
+local otherTypeIndex = #MOB_TYPES+1
+MOB_TYPES[otherTypeIndex] = "Other / unknown mobs"
+typeDefaults[otherTypeIndex] = true
+menu.AddMulticombo(TAB, GROUP, "sao_mob_types", "Mob types", MOB_TYPES, typeDefaults)
 
 local function mobTypeId(name)
     -- Share the base toggle for every Corrupted<BaseName> variant.
     -- CorruptedMiniboss has no confirmed base species; keep it under Other.
     local base = name:lower():gsub("[%s_%-]", ""):gsub("^corrupted", "")
-    return typeIds[base] or "sao_mob_other"
+    return typeIds[base] or otherTypeIndex
 end
 
 local models, lastScan = {}, -math.huge
@@ -119,8 +123,9 @@ local function frame()
     if lp then ox, oy, oz = xyz(lp.Position) end
     if not ox then return end
     local candidates = {}
+    local selectedTypes = menu.Get("sao_mob_types") or {}
     for _, entry in ipairs(models) do
-        if menu.Get(entry.typeId) then
+        if selectedTypes[entry.typeId] then
             local ok, x, y, z = pcall(function()
                 if not utility.IsValid(entry.model) or not utility.IsValid(entry.root) then return end
                 if not entry.model.Parent then return end
@@ -261,15 +266,15 @@ OnFrame = function()
     local ok, err = pcall(frame)
     if not ok and utility.GetTime() - lastError >= 5 then
         lastError = utility.GetTime()
-        print("[SAO ESP] " .. tostring(err))
+        showError("[SAO ESP] " .. tostring(err))
     end
     local oreOK, oreError = pcall(oreFrame)
     if not oreOK and utility.GetTime() - lastOreError >= 5 then
         lastOreError = utility.GetTime()
-        print("[SAO Ore ESP] " .. tostring(oreError))
+        showError("[SAO Ore ESP] " .. tostring(oreError))
     end
 end
-print("[SAO] " .. SAE_TITLE .. " loaded. Open SAO for settings.")
+
 
 local function makeSAETracker()
 -- AnimationTracker for Project Vector
@@ -421,7 +426,7 @@ for _, url in ipairs({
             return data.Offsets or data
         end)
         if ok and type(result) == "table" and next(result) then
-            print("[DEBUG] Successfully using offsets from: " .. url)
+
             offsets = result
             break
         end
@@ -651,7 +656,7 @@ function AnimationTracker:Update(character)
     return activeSnapshot
 end
 
-print("[AnimationTracker] Vector port loaded, use Tracker:Update() in a loop v1.1")
+
 
 -- Tracker is private to SAE.
 return AnimationTracker
@@ -659,7 +664,13 @@ return AnimationTracker
 end
 -- Experimental basic-mob parry. Hold activation key only while in Roblox.
 local function setupParry(makeTracker)
-    local tab, group = "SAO", "Auto parry (experimental)"
+    -- Matriarch configuration stays in code, outside the user menu.
+    local MATRIARCH = {
+        detectionDistance=40, attackDistance=15, dodgeKey=0x11,
+        dodgeDelayMs=650, circleFillPercent=65,
+        dodgeCircles=true, escapeLargeCircles=true, animationFallback=false,
+    }
+    local tab, group = "SAO", "Auto parry"
     menu.AddGroup(tab, group)
     menu.AddCheckbox(tab, group, "sae_ap_enabled", "Enable auto parry", false)
     menu.AddHotkey(tab, group, "sae_ap_hold", "Activation key", 0x56)
@@ -670,26 +681,13 @@ local function setupParry(makeTracker)
     menu.AddSliderFloat(tab, group, "sae_ap_nepenthes_range", "Nepenthes detection distance", 2, 60, 30, "%.1f")
     -- Initial calibration value, not a verified server hit timestamp.
     menu.AddSliderInt(tab, group, "sae_ap_nepenthes_delay", "Nepenthes animation delay (ms)", 0, 1200, 250)
-    menu.AddSliderFloat(tab, group, "sae_ap_matriarch_range", "Matriarch detection distance", 2, 80, 40, "%.1f")
-    menu.AddHotkey(tab, group, "sae_ap_dodge_key", "Dodge key (Matriarch)", 0x11)
-    menu.AddSliderInt(tab, group, "sae_ap_matriarch_dodge_delay", "Matriarch dodge delay (ms)", 0, 1500, 650)
-    menu.AddCheckbox(tab, group, "sae_ap_circles", "Dodge Matriarch danger circles", true)
-    menu.AddCheckbox(tab, group, "sae_ap_circle_escape", "Run out of large circles + repeat dodge", true)
-    menu.AddLabel(tab, group, "Auto exit uses WASD. Manual movement takes priority.")
-    menu.AddSliderInt(tab, group, "sae_ap_circle_fill", "Dodge at circle fill (%)", 20, 95, 65)
-    menu.AddCheckbox(tab, group, "sae_ap_matriarch_anim", "Also dodge by Matriarch animation", false)
-    menu.AddLabel(tab, group, "Matriarch casts: dodge. Moving chooses direction; standing still dashes backward.")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
-    menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
-    menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
-    menu.AddHotkey(tab, group, "sae_ap_test", "Test parry (while active)", 0x77)
     menu.AddLabel(tab, group, "Activation mode applies to parry and auto attacks. LMB option also activates parry.")
     local fight = "Auto combat"
     menu.AddGroup(tab, fight)
     menu.AddCheckbox(tab, fight, "sae_fight_enabled", "Auto attack while active", false)
     menu.AddCheckbox(tab, fight, "sae_fight_lmb", "Use LMB attacks", true)
     menu.AddSliderFloat(tab, fight, "sae_fight_range", "Attack distance", 2, 12, 7, "%.1f")
-    menu.AddSliderFloat(tab, fight, "sae_fight_matriarch_range", "Matriarch attack distance", 2, 15, 15, "%.1f")
     menu.AddSliderInt(tab, fight, "sae_fight_interval", "LMB interval (ms)", 150, 1500, 400)
     menu.AddSliderInt(tab, fight, "sae_fight_pause", "Pause after parry (ms)", 400, 2000, 700)
     for slot = 1, 4 do
@@ -716,8 +714,8 @@ local function setupParry(makeTracker)
     local circles,circleScanAt={},-math.huge
     local escapeTarget=nil
     local function circleThreats(now,origin)
-        if not menu.Get("sae_ap_circles") then circles={};escapeTarget=nil;return {},0 end
-        if not menu.Get("sae_ap_circle_escape")then escapeTarget=nil end
+        if not MATRIARCH.dodgeCircles then circles={};escapeTarget=nil;return {},0 end
+        if not MATRIARCH.escapeLargeCircles then escapeTarget=nil end
         if now-circleScanAt>=0.05 then
             circleScanAt=now
             local live={}
@@ -763,8 +761,8 @@ local function setupParry(makeTracker)
                 -- Frame remains briefly after impact. Never trigger from a
                 -- completed GUI warning; the filled fraction follows Quad.In.
                 if fill and fill>=0.995 then return end
-                local target=menu.Get("sae_ap_matriarch_dodge_delay")/1000
-                local large=menu.Get("sae_ap_circle_escape") and radius>=12
+                local target=MATRIARCH.dodgeDelayMs/1000
+                local large=MATRIARCH.escapeLargeCircles and radius>=12
                 if large then
                     local oldNeed=-math.huge
                     if escapeTarget then
@@ -775,14 +773,9 @@ local function setupParry(makeTracker)
                             expiresAt=record.seenAt+3,fill=fill}
                     end
                 end
-                local due=fill and fill>=menu.Get("sae_ap_circle_fill")/100
+                local due=fill and fill>=MATRIARCH.circleFillPercent/100
                     or not fill and age>=target and age<=target+0.25
                 inside=inside+1
-                if not record.logged and menu.Get("sae_ap_log")then
-                    record.logged=true
-                    print(string.format("[SAE dodge] Inside circle | radius=%.1f distance=%.1f fill=%s",
-                        radius,distance,fill and string.format("%.2f",fill) or "unreadable; using delay"))
-                end
                 if due and not record.used and not large then
                     threats[#threats+1]={state=record,action="dodge",distance=distance,
                         name="Matriarch danger circle",id="MatriarchTelegraph",time=age,target=target}
@@ -842,26 +835,13 @@ local function setupParry(makeTracker)
         if not ok then error(err)end
     end
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
-    local combatLogAt, clickCount = -math.huge, 0
-    local status, testWasDown = "Enable parry, then hold V", false
-    local nearestInfo = ""
-    local previousHealth=nil
-    local lastParryTarget="none"
     local toggleActive, bindWasDown, previousMode, previousBind = false, false, nil, nil
-    menu.AddButton(tab, group, "sae_ap_retry", "Retry tracker initialization", function()
-        failed, Tracker, state = false, nil, {}
-        status = "Tracker reset; enable parry and hold activation"
-    end)
     return function()
-        if menu.Get("sae_ap_status") then
-            draw.Text(20, 110, "SAE parry: " .. status, {1, 0.85, 0.3, 1}, 14)
-            if nearestInfo ~= "" then draw.Text(20, 128, nearestInfo, {1, 1, 1, 1}, 14) end
-        end
         if not menu.Get("sae_ap_enabled") then
             circles={};circleScanAt=-math.huge;escapeTarget=nil
-            previousHealth=nil
             toggleActive, bindWasDown = false, false
-            status = "Disabled"; state = {}; testWasDown = false; return
+            if failed then failed=false;Tracker=nil end
+            state = {}; return
         end
         local mode, bind = menu.Get("sae_ap_mode"), menu.GetKey("sae_ap_hold")
         local bindDown = bind > 0 and input.IsKeyDown(bind)
@@ -877,53 +857,27 @@ local function setupParry(makeTracker)
         local manualAttack = menu.Get("sae_ap_manual_lmb") and input.IsKeyDown(0x01)
         if not holdActive and not manualAttack then
             circles={};circleScanAt=-math.huge;escapeTarget=nil
-            previousHealth=nil
-            status = mode == 1 and "Toggle OFF" or "Waiting for activation key"; testWasDown = false
             state = {}; return
         end
-        local testDown = holdActive and input.IsKeyDown(menu.GetKey("sae_ap_test"))
-        if testDown and not testWasDown then
-            local key = menu.GetKey("sae_ap_key")
-            if key > 0 and not input.IsKeyDown(key) then
-                utility.KeyPress(key, 50); lastPress = utility.GetTime()
-                attackAfter = lastPress + menu.Get("sae_fight_pause") / 1000
-                print("[SAE parry] Test key sent: " .. key)
-            end
-        end
-        testWasDown = testDown
         if failed then return end
         if not Tracker then
             local ok, result = pcall(makeTracker)
             if not ok then
                 failed = true; menu.Set("sae_ap_enabled", false)
-                status = "Tracker initialization failed (see console)"
-                print("[SAE parry] Tracker unavailable: " .. tostring(result)); return
+                showError("[SAE parry] Tracker unavailable: " .. tostring(result)); return
             end
             Tracker = result
         end
         local now = utility.GetTime()
         local lp = entity.GetLocalPlayer()
-        if not lp or not lp.IsAlive or not lp.Position then previousHealth=nil;status = "Local player unavailable/dead"; state = {}; return end
-        local hp=lp.Health
-        if type(hp)=="number" then
-            if previousHealth and hp<previousHealth and menu.Get("sae_ap_log") then
-                local ago=now-lastPress
-                print(string.format("[SAE parry] HP -%.1f | last F: %s | target=%s | last dodge: %s",
-                    previousHealth-hp,ago<100 and string.format("%.3fs ago",ago) or "none",lastParryTarget,
-                    now-lastDodge<100 and string.format("%.3fs ago",now-lastDodge) or "none"))
-            end
-            previousHealth=hp
-        end
+        if not lp or not lp.IsAlive or not lp.Position then state = {}; return end
         local origin = lp.Position
         local folder = game.Workspace:FindFirstChild("Mobs")
-        if not utility.IsValid(folder) then status = "Workspace.Mobs missing"; state = {}; return end
+        if not utility.IsValid(folder) then state = {}; return end
         local present, ready = {}, {}
-        local nearby, trackCount, matched, nearest = 0, 0, 0, math.huge
         local threatening = 0
         local attackDistance = math.huge
-        local inAttackRange=0
         local look = camera.GetLookVector()
-        nearestInfo = ""
         for _, mob in ipairs(folder:GetChildren()) do
             local baseName = mob.Name:lower():gsub("[%s_%-]", ""):gsub("^corrupted", "")
             local allowed = attacks[baseName]
@@ -935,50 +889,35 @@ local function setupParry(makeTracker)
                     local distance = math.sqrt((p.X-origin.X)^2+(p.Y-origin.Y)^2+(p.Z-origin.Z)^2)
                     local matriarch = matriarchNames[baseName]
                     local plant = baseName=="nepenthes" or baseName=="littlenepenthes"
-                    local detectionRange = matriarch and menu.Get("sae_ap_matriarch_range")
+                    local detectionRange = matriarch and MATRIARCH.detectionDistance
                         or plant and menu.Get("sae_ap_nepenthes_range") or menu.Get("sae_ap_range")
                     if distance > detectionRange then return end
-                    nearby = nearby + 1
                     local key = mob.Address
                     present[key] = true
                     local s = state[key] or {tracker=Tracker.new(), tracks={}}
                     state[key] = s
                     local active = {}
                     local tracks = s.tracker:Update(mob)
-                    trackCount = trackCount + #tracks
-                    if distance < nearest then
-                        nearest = distance
-                        local trackLabels={}
-                        for i,info in ipairs(tracks) do
-                            if i>6 then break end
-                            trackLabels[#trackLabels+1]=tostring(info.AnimationId).." @"..tostring(info.TimePosition)
-                        end
-                        nearestInfo = mob.Name .. " | " .. string.format("%.1f studs", distance)
-                            .. " | " .. tostring(s.tracker.Status)
-                            .. (#trackLabels>0 and (" | animations: "..table.concat(trackLabels,", ")) or " | no tracks")
-                    end
                     for _, info in ipairs(tracks) do
                         local id = tonumber(tostring(info.AnimationId):match("%d+"))
                         local t = info.TimePosition
                         -- Use the active-list membership and bounded clip time;
                         -- do not gate input on the unverified IsPlaying byte offset.
                         if allowed[id] and type(t)=="number" and t==t and t>=0 then
-                            matched = matched + 1
                             local k = tostring(info.Address) .. ":" .. tostring(id)
                             active[k] = true
                             local old = s.tracks[k]
                             if not old or t < old.time-0.05 then
                                 old = {used=false, time=t, movedAt=now}; s.tracks[k] = old
-                                if menu.Get("sae_ap_log") then print("[SAE parry] " .. mob.Name .. " animation=" .. id .. " time=" .. t) end
                             end
                             if t > old.time + 0.001 then old.movedAt = now end
                             old.time = t
                             old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
-                            local target = (matriarch and menu.Get("sae_ap_matriarch_dodge_delay")
+                            local target = (matriarch and MATRIARCH.dodgeDelayMs
                                 or plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
                             local moving = now - (old.movedAt or now) <= 0.15
-                            local animationDefense=not matriarch or menu.Get("sae_ap_matriarch_anim")
+                            local animationDefense=not matriarch or MATRIARCH.animationFallback
                             if animationDefense and moving and t <= target+0.9 then threatening = threatening + 1 end
                             if animationDefense and moving and not old.used and t >= target and t <= target+0.6 then
                                 ready[#ready+1] = {state=old, distance=distance,name=mob.Name,id=id,time=t,target=target,
@@ -990,9 +929,8 @@ local function setupParry(makeTracker)
                     for k, record in pairs(s.tracks) do
                         if not active[k] and now-(record.lastSeen or now)>0.15 then s.tracks[k]=nil end
                     end
-                    local attackRange=matriarch and menu.Get("sae_fight_matriarch_range") or menu.Get("sae_fight_range")
+                    local attackRange=matriarch and MATRIARCH.attackDistance or menu.Get("sae_fight_range")
                     if distance <= attackRange and distance > 0.01 and look then
-                        inAttackRange=inAttackRange+1
                         -- Facing is yaw, not camera pitch: a tall target remains
                         -- in front when looking upward toward its head.
                         local fx,fz=look.X,look.Z
@@ -1011,7 +949,7 @@ local function setupParry(makeTracker)
                 end)
                 if not ok then
                     failed = true; menu.Set("sae_ap_enabled", false)
-                    print("[SAE parry] Disabled after tracker error: " .. tostring(err)); return
+                    showError("[SAE parry] Disabled after tracker error: " .. tostring(err)); return
                 end
             end
         end
@@ -1021,60 +959,31 @@ local function setupParry(makeTracker)
         for key in pairs(state) do if not present[key] then state[key]=nil end end
         table.sort(ready,function(a,b) return a.distance<b.distance end)
         local key = menu.GetKey("sae_ap_key")
-        status = string.format("mobs=%d tracks=%d attacks=%d circles=%d ready=%d", nearby, trackCount, matched, inCircle, #ready)
         local chosen,defenseKey
         for _,candidate in ipairs(ready)do
             local dodge=candidate.action=="dodge"
-            local bind=dodge and menu.GetKey("sae_ap_dodge_key") or key
+            local bind=dodge and MATRIARCH.dodgeKey or key
             local elapsed=dodge and now-lastDodge or now-lastPress
             if elapsed >= (dodge and 0.6 or 0.95) and bind>0 and not input.IsKeyDown(bind)then
                 chosen,defenseKey=candidate,bind;break
             end
         end
-        if ready[1] and not chosen then status=status.." | waiting: defense cooldown / key held" end
         if chosen then
             local dodge=chosen.action=="dodge"
-            if dodge then lastDodge=now else lastPress=now;lastParryTarget=chosen.name end
+            if dodge then lastDodge=now else lastPress=now end
             attackAfter = now + menu.Get("sae_fight_pause") / 1000
             for _, attack in ipairs(ready) do
                 if attack.action==chosen.action then attack.state.used = true;attack.state.usedAt=now end
             end
             defensiveInput(defenseKey,escape,origin,look)
-            if menu.Get("sae_ap_log") then
-                print(string.format("[SAE %s] %s sent | %s | animation=%s time=%.3f target=%.3f",
-                    dodge and "dodge" or "parry",dodge and "Dash" or "F",
-                    chosen.name,tostring(chosen.id),chosen.time,chosen.target))
-            end
-            status = status .. (dodge and " | Dodge sent" or " | F sent")
             return
         end
         if escape then
-            status=status.." | moving out of large circle"
             defensiveInput(nil,escape,origin,look)
             return
         end
         -- Never start an automated attack while a known enemy attack is active,
         -- during manual block, or in the recovery period after our last input.
-        if menu.Get("sae_fight_enabled") then
-            if threatening > 0 then status = status .. " | waiting: enemy attack"
-            elseif now < attackAfter then status = status .. " | waiting: recovery"
-            elseif attackDistance == math.huge then status = status .. (inAttackRange==0 and " | waiting: out of attack range" or " | waiting: face target") end
-        end
-        if menu.Get("sae_ap_log") and now-combatLogAt >= 2 then
-            combatLogAt = now
-            local reason
-            if not menu.Get("sae_fight_enabled") then reason = "auto combat OFF"
-            elseif not holdActive then reason = "combat activation OFF (LMB activates parry only)"
-            elseif threatening > 0 then reason = "enemy attack active"
-            elseif now < attackAfter then reason = string.format("recovery %.2fs", attackAfter-now)
-            elseif attackDistance == math.huge then reason = inAttackRange==0 and "out of attack range" or "target behind / unreadable orientation"
-            elseif input.IsKeyDown(key) then reason = "parry key held"
-            elseif not menu.Get("sae_fight_lmb") then reason = "auto LMB OFF"
-            elseif input.IsKeyDown(0x01) then reason = "manual LMB held"
-            else reason = "auto LMB ready" end
-            print(string.format("[SAE combat] %s | range=%.1f matriarchRange=%.1f | LMB sent=%d | %s",
-                reason, menu.Get("sae_fight_range"), menu.Get("sae_fight_matriarch_range"), clickCount, nearestInfo))
-        end
         if not holdActive or not menu.Get("sae_fight_enabled") or threatening > 0
             or now < attackAfter or attackDistance == math.huge
             or input.IsKeyDown(key) then return end
@@ -1095,7 +1004,6 @@ local function setupParry(makeTracker)
             and now-lastClick >= menu.Get("sae_fight_interval")/1000 then
             lastClick = now
             utility.MouseClick("left")
-            clickCount = clickCount + 1
         end
     end
 end
@@ -1248,12 +1156,12 @@ local function setupStaminaOptions()
             assert(not e and type(check)=="table" and #check==1 and check[1].table==m.table
                 and check[1].fields.staminaCost==target,"Dash read-back failed")
             applied=enabled
-            print("[SAE stamina] Dash at zero stamina: "..(enabled and "ON" or "OFF"))
+
         end)
         busy=false
         if not ok then
             menu.Set("sae_zero_dash",applied)
-            print("[SAE stamina] "..tostring(err))
+            showError("[SAE stamina] "..tostring(err))
         end
     end)
 end
@@ -1514,23 +1422,23 @@ OnFrame = function()
     local ok, err = pcall(parryFrame)
     if not ok then
         menu.Set("sae_ap_enabled", false)
-        print("[SAE parry] Disabled: " .. tostring(err))
+        showError("[SAE parry] Disabled: " .. tostring(err))
     end
     espFrame()
     local lootOK,lootError=pcall(lootFrame)
     if not lootOK and utility.GetTime()-lootErrorAt>=5 then
         lootErrorAt=utility.GetTime()
-        print("[SAE Loot ESP] "..tostring(lootError))
+        showError("[SAE Loot ESP] "..tostring(lootError))
     end
     local npcOK,npcError=pcall(npcFrame)
     if not npcOK and utility.GetTime()-npcErrorAt>=5 then
         npcErrorAt=utility.GetTime()
-        print("[SAE NPC ESP] "..tostring(npcError))
+        showError("[SAE NPC ESP] "..tostring(npcError))
     end
     local zoneOK, zoneError = pcall(zoneFrame)
     if not zoneOK and utility.GetTime()-zoneErrorAt >= 5 then
         zoneErrorAt = utility.GetTime()
-        print("[SAE zone ESP] "..tostring(zoneError))
+        showError("[SAE zone ESP] "..tostring(zoneError))
     end
     pcall(watermarkFrame)
 end
