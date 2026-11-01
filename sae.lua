@@ -882,6 +882,130 @@ local function setupParry(makeTracker)
     end
 end
 
+local function setupLootESP()
+    local group="Loot ESP"
+    menu.AddGroup(TAB,group)
+    menu.AddCheckbox(TAB,group,"sae_loot_enabled","Enable chest / pickup ESP",true)
+    local categories={Chest={"Treasure chests",{1,0.8,0.2,1}},
+        Storage={"Inn storage",{0.6,0.7,1,1}},Pickup={"Story pickups",{0.4,1,0.65,1}}}
+    for _,kind in ipairs({"Chest","Storage","Pickup"})do
+        menu.AddCheckbox(TAB,group,"sae_loot_"..kind,categories[kind][1],true)
+        menu.AddColorpicker(TAB,group,"sae_loot_color_"..kind,categories[kind][1].." color",categories[kind][2])
+    end
+    menu.AddCheckbox(TAB,group,"sae_loot_hide_inactive","Hide disabled / collected",true)
+    menu.AddSliderInt(TAB,group,"sae_loot_range","Maximum distance",50,10000,2500,"%d studs")
+    menu.AddSliderInt(TAB,group,"sae_loot_limit","Maximum labels",1,100,40)
+    menu.AddSliderInt(TAB,group,"sae_loot_font","Font size",10,24,14)
+    local candidates,stack,pending,seen={},nil,{},{}
+    local scanAt=-math.huge
+    local function beginScan()
+        stack,pending,seen={},{},{}
+        for _,child in ipairs(game.Workspace:GetChildren())do
+            if child.Name=="Dungeon" or child.Name=="StoryLocal" or child.Name=="InnChest" then
+                stack[#stack+1]=child
+            else
+                local room=child:FindFirstChild("InnRoom")
+                if utility.IsValid(room)then stack[#stack+1]=room end
+            end
+        end
+    end
+    local function inspect(obj)
+        local kind,part,prompt,label
+        if obj:IsA("Model") and (obj.Name=="Chest" or obj.Name=="InnChest")then
+            local main=obj:FindFirstChild("Main")
+            if utility.IsValid(main) and main:IsA("BasePart")then
+                prompt=main:FindFirstDescendantOfClass("ProximityPrompt")
+                if utility.IsValid(prompt) and (obj.Name=="InnChest" or obj:FindFirstChild("Lid"))then
+                    kind=obj.Name=="InnChest" and "Storage" or "Chest"
+                    part,label=main,kind=="Storage" and "Inn storage" or "Treasure chest"
+                end
+            end
+        elseif obj.Name=="StoryPickup" and obj:IsA("BasePart")then
+            prompt=obj:FindFirstChildOfClass("ProximityPrompt")
+            if utility.IsValid(prompt)then kind,part,label="Pickup",obj,"Story pickup" end
+        end
+        if kind then
+            local key=tostring(part.Address)
+            if not seen[key]then
+                seen[key]=true
+                pending[#pending+1]={part=part,prompt=prompt,kind=kind,label=label}
+            end
+        end
+    end
+    return function()
+        if not menu.Get("sae_loot_enabled")then stack=nil;return end
+        local now=utility.GetTime()
+        if not stack and now-scanAt>=5 then scanAt=now;beginScan()end
+        -- Incremental traversal of confirmed loot containers only.
+        if stack then
+            local began=utility.GetTime()
+            for _=1,150 do
+                if #stack==0 then candidates=pending;stack=nil;break end
+                local obj=table.remove(stack)
+                if utility.IsValid(obj)then
+                    local ok=pcall(function()
+                        inspect(obj)
+                        for _,child in ipairs(obj:GetChildren())do stack[#stack+1]=child end
+                    end)
+                    -- A streamed-out object is retried on the next scan.
+                end
+                if utility.GetTime()-began>=0.002 then break end
+            end
+        end
+        local lp=entity.GetLocalPlayer()
+        local ox,oy,oz=xyz(lp and lp.Position)
+        if not ox then return end
+        local points={}
+        for _,entry in ipairs(candidates)do
+            if menu.Get("sae_loot_"..entry.kind)then
+                local ok,x,y,z,label=pcall(function()
+                    if not utility.IsValid(entry.part) or not entry.part.Parent
+                        or not utility.IsValid(entry.prompt) or not entry.prompt.Parent then return end
+                    if menu.Get("sae_loot_hide_inactive")then
+                        -- These properties are capability probes like NPC Text.
+                        -- If unsupported, retain the object instead of assuming empty.
+                        local readable,enabled=pcall(function()return entry.prompt.Enabled end)
+                        if readable and enabled==false then return end
+                        if entry.kind=="Pickup" then
+                            local valid,transparency=pcall(function()return entry.part.Transparency end)
+                            if valid and transparency==1 then return end
+                        end
+                    end
+                    local label=entry.label
+                    if entry.kind=="Pickup"then
+                        local readable,text=pcall(function()return entry.prompt.ObjectText end)
+                        if readable and type(text)=="string" and text~="" then label=text.." [Pickup]" end
+                    end
+                    local x,y,z=xyz(entry.part.Position)
+                    return x,y,z,label
+                end)
+                if ok and x then
+                    local distance=math.sqrt((x-ox)^2+(y-oy)^2+(z-oz)^2)
+                    if distance<=menu.Get("sae_loot_range")then
+                        points[#points+1]={x=x,y=y,z=z,label=label,kind=entry.kind,distance=distance}
+                    end
+                end
+            end
+        end
+        table.sort(points,function(a,b)return a.distance<b.distance end)
+        local drawn,size=0,menu.Get("sae_loot_font")
+        for _,p in ipairs(points)do
+            if drawn>=menu.Get("sae_loot_limit")then break end
+            local x,y=project(p.x,p.y+2,p.z)
+            if x then
+                local color=menu.GetColor("sae_loot_color_"..p.kind)
+                local w=draw.GetTextSize(p.label,size)
+                draw.Text(x-w/2,y-size-4,p.label,color,size)
+                local distance=string.format("%.0f studs",p.distance)
+                local dw=draw.GetTextSize(distance,size)
+                draw.Text(x-dw/2,y+4,distance,color,size)
+                drawn=drawn+1
+            end
+        end
+    end
+end
+local lootFrame=setupLootESP()
+local lootErrorAt=-math.huge
 local function setupNPCESP()
     local group = "NPC ESP"
     menu.AddGroup(TAB,group)
@@ -1134,6 +1258,11 @@ OnFrame = function()
         print("[SAE parry] Disabled: " .. tostring(err))
     end
     espFrame()
+    local lootOK,lootError=pcall(lootFrame)
+    if not lootOK and utility.GetTime()-lootErrorAt>=5 then
+        lootErrorAt=utility.GetTime()
+        print("[SAE Loot ESP] "..tostring(lootError))
+    end
     local npcOK,npcError=pcall(npcFrame)
     if not npcOK and utility.GetTime()-npcErrorAt>=5 then
         npcErrorAt=utility.GetTime()
