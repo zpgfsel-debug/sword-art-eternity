@@ -263,4 +263,3 @@ OnFrame = function()
     end
 end
 print("[SAO] Mob and Ore ESP loaded. Open SAO > Mob ESP / Ore ESP.")
-
