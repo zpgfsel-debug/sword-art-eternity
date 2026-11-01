@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.3"
+local SAE_VERSION = "1.2.4"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -671,8 +671,9 @@ local function setupParry(makeTracker)
     -- Initial calibration value, not a verified server hit timestamp.
     menu.AddSliderInt(tab, group, "sae_ap_nepenthes_delay", "Nepenthes animation delay (ms)", 0, 1200, 250)
     menu.AddSliderFloat(tab, group, "sae_ap_matriarch_range", "Matriarch detection distance", 2, 80, 40, "%.1f")
-    menu.AddSliderInt(tab, group, "sae_ap_matriarch_cast_delay", "Matriarch cast delay (ms)", 0, 1500, 450)
-    menu.AddLabel(tab, group, "Matriarch: observed cast animation; special-attack parry is experimental.")
+    menu.AddHotkey(tab, group, "sae_ap_dodge_key", "Dodge key (Matriarch)", 0x11)
+    menu.AddSliderInt(tab, group, "sae_ap_matriarch_dodge_delay", "Matriarch dodge delay (ms)", 0, 1500, 650)
+    menu.AddLabel(tab, group, "Matriarch casts: dodge. Moving chooses direction; standing still dashes backward.")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
@@ -706,6 +707,7 @@ local function setupParry(makeTracker)
     for name in pairs(matriarchNames)do attacks[name]={[116371641636454]=true} end
     local state, Tracker, failed = {}, nil, false
     local lastPress = -math.huge
+    local lastDodge = -math.huge
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
     local combatLogAt, clickCount = -math.huge, 0
     local status, testWasDown = "Enable parry, then hold V", false
@@ -771,8 +773,9 @@ local function setupParry(makeTracker)
         if type(hp)=="number" then
             if previousHealth and hp<previousHealth and menu.Get("sae_ap_log") then
                 local ago=now-lastPress
-                print(string.format("[SAE parry] HP -%.1f | last F: %s | target=%s",
-                    previousHealth-hp,ago<100 and string.format("%.3fs ago",ago) or "none",lastParryTarget))
+                print(string.format("[SAE parry] HP -%.1f | last F: %s | target=%s | last dodge: %s",
+                    previousHealth-hp,ago<100 and string.format("%.3fs ago",ago) or "none",lastParryTarget,
+                    now-lastDodge<100 and string.format("%.3fs ago",now-lastDodge) or "none"))
             end
             previousHealth=hp
         end
@@ -836,12 +839,13 @@ local function setupParry(makeTracker)
                             old.time = t
                             old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
-                            local target = (matriarch and menu.Get("sae_ap_matriarch_cast_delay")
+                            local target = (matriarch and menu.Get("sae_ap_matriarch_dodge_delay")
                                 or plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
                             local moving = now - (old.movedAt or now) <= 0.15
                             if moving and t <= target+0.9 then threatening = threatening + 1 end
                             if moving and not old.used and t >= target and t <= target+0.6 then
-                                ready[#ready+1] = {state=old, distance=distance,name=mob.Name,id=id,time=t,target=target}
+                                ready[#ready+1] = {state=old, distance=distance,name=mob.Name,id=id,time=t,target=target,
+                                    action=matriarch and "dodge" or "parry"}
                             end
                         end
                     end
@@ -867,20 +871,30 @@ local function setupParry(makeTracker)
         table.sort(ready,function(a,b) return a.distance<b.distance end)
         local key = menu.GetKey("sae_ap_key")
         status = string.format("mobs=%d tracks=%d attacks=%d ready=%d", nearby, trackCount, matched, #ready)
-        if ready[1] and now-lastPress < 0.95 then
-            status = status .. string.format(" | cooldown %.2fs", 0.95-(now-lastPress))
-        end
-        if ready[1] and now-lastPress >= 0.95 and key>0 and not input.IsKeyDown(key) then
-            lastPress = now
-            lastParryTarget=ready[1].name
-            attackAfter = now + menu.Get("sae_fight_pause") / 1000
-            for _, attack in ipairs(ready) do attack.state.used = true end
-            utility.KeyPress(key, 50)
-            if menu.Get("sae_ap_log") then
-                print(string.format("[SAE parry] F sent | %s | animation=%s time=%.3f target=%.3f",
-                    ready[1].name,tostring(ready[1].id),ready[1].time,ready[1].target))
+        local chosen,defenseKey
+        for _,candidate in ipairs(ready)do
+            local dodge=candidate.action=="dodge"
+            local bind=dodge and menu.GetKey("sae_ap_dodge_key") or key
+            local elapsed=dodge and now-lastDodge or now-lastPress
+            if elapsed >= (dodge and 0.6 or 0.95) and bind>0 and not input.IsKeyDown(bind)then
+                chosen,defenseKey=candidate,bind;break
             end
-            status = status .. " | F sent"
+        end
+        if ready[1] and not chosen then status=status.." | waiting: defense cooldown / key held" end
+        if chosen then
+            local dodge=chosen.action=="dodge"
+            if dodge then lastDodge=now else lastPress=now;lastParryTarget=chosen.name end
+            attackAfter = now + menu.Get("sae_fight_pause") / 1000
+            for _, attack in ipairs(ready) do
+                if attack.action==chosen.action then attack.state.used = true end
+            end
+            utility.KeyPress(defenseKey, 50)
+            if menu.Get("sae_ap_log") then
+                print(string.format("[SAE %s] %s sent | %s | animation=%s time=%.3f target=%.3f",
+                    dodge and "dodge" or "parry",dodge and "Dash" or "F",
+                    chosen.name,tostring(chosen.id),chosen.time,chosen.target))
+            end
+            status = status .. (dodge and " | Dodge sent" or " | F sent")
             return
         end
         -- Never start an automated attack while a known enemy attack is active,
