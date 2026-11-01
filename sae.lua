@@ -430,9 +430,6 @@ end
 ---------------------------------------------------------------------------
 local KnownOffsets = {
     ["AnimationId"]                = offsets.Misc and offsets.Misc.AnimationId or 0,
-    ["ClassDescriptor"]            = offsets.Instance and offsets.Instance.ClassDescriptor or 0,    -- const
-    ["ClassDescriptorToClassName"] = offsets.Instance and offsets.Instance.ClassName or 0,          -- const
-    ["Name"]                       = offsets.Instance and offsets.Instance.Name or 0,               -- const
     ["TimePosition"]               = offsets.AnimationTrack and offsets.AnimationTrack.TimePosition or 0,
     ["ActiveAnimations"]           = offsets.Animator and offsets.Animator.ActiveAnimations or 0,    -- const
     ["Animation"]                  = offsets.AnimationTrack and offsets.AnimationTrack.Animation or 0,
@@ -445,7 +442,7 @@ local KnownOffsets = {
 ---------------------------------------------------------------------------
 -- Core memory-reading functions
 ---------------------------------------------------------------------------
-for _, key in ipairs({"AnimationId", "TimePosition", "ActiveAnimations", "Animation", "Speed", "IsPlaying", "Name"}) do
+for _, key in ipairs({"AnimationId", "TimePosition", "ActiveAnimations", "Animation", "Speed", "IsPlaying"}) do
     assert(type(KnownOffsets[key]) == "number" and KnownOffsets[key] > 0, "Missing offset: " .. key)
 end
 local function GetAnimatorAddress(Character)
@@ -526,15 +523,13 @@ local function ExtractAnimationTrackInfo(AnimationTrackAddress)
     if not AnimIdPointer or AnimIdPointer == 0 then return nil end
     local AnimationId    = memory.ReadString(AnimIdPointer, 256)
 
-    local NamePtr        = memory.Read(AnimationTrackAddress + KnownOffsets.Name, "ptr")
-    local Name = NamePtr and NamePtr ~= 0 and memory.ReadString(NamePtr, 256) or ""
     local TimePosition   = memory.Read(AnimationTrackAddress + KnownOffsets.TimePosition, "float")
     local Speed          = memory.Read(AnimationTrackAddress + KnownOffsets.Speed, "float")
     local IsPlaying      = memory.Read(AnimationTrackAddress + KnownOffsets.IsPlaying, "u8")
 
     return {
         Address      = AnimationTrackAddress,
-        Name         = Name,
+        Name         = "", -- Parry identifies attacks by AnimationId, not track name.
         AnimationId  = AnimationId,
         TimePosition = TimePosition,
         Speed        = Speed,
