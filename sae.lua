@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.1.8"
+local SAE_VERSION = "1.1.9"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -665,6 +665,8 @@ local function setupParry(makeTracker)
     menu.AddHotkey(tab, group, "sae_ap_key", "Block / parry key", 0x46)
     menu.AddSliderFloat(tab, group, "sae_ap_range", "Maximum distance", 2, 20, 10, "%.1f")
     menu.AddSliderFloat(tab, group, "sae_ap_nepenthes_range", "Nepenthes detection distance", 2, 25, 15, "%.1f")
+    -- Initial calibration value, not a verified server hit timestamp.
+    menu.AddSliderInt(tab, group, "sae_ap_nepenthes_delay", "Nepenthes animation delay (ms)", 0, 1200, 250)
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
@@ -696,6 +698,8 @@ local function setupParry(makeTracker)
     local combatLogAt, clickCount = -math.huge, 0
     local status, testWasDown = "Enable parry, then hold V", false
     local nearestInfo = ""
+    local previousHealth=nil
+    local lastParryTarget="none"
     local toggleActive, bindWasDown, previousMode, previousBind = false, false, nil, nil
     menu.AddButton(tab, group, "sae_ap_retry", "Retry tracker initialization", function()
         failed, Tracker, state = false, nil, {}
@@ -707,6 +711,7 @@ local function setupParry(makeTracker)
             if nearestInfo ~= "" then draw.Text(20, 128, nearestInfo, {1, 1, 1, 1}, 14) end
         end
         if not menu.Get("sae_ap_enabled") then
+            previousHealth=nil
             toggleActive, bindWasDown = false, false
             status = "Disabled"; state = {}; testWasDown = false; return
         end
@@ -723,6 +728,7 @@ local function setupParry(makeTracker)
         local holdActive = mode == 2 or (mode == 1 and toggleActive) or (mode == 0 and bindDown)
         local manualAttack = menu.Get("sae_ap_manual_lmb") and input.IsKeyDown(0x01)
         if not holdActive and not manualAttack then
+            previousHealth=nil
             status = mode == 1 and "Toggle OFF" or "Waiting for activation key"; testWasDown = false
             state = {}; return
         end
@@ -748,7 +754,16 @@ local function setupParry(makeTracker)
         end
         local now = utility.GetTime()
         local lp = entity.GetLocalPlayer()
-        if not lp or not lp.IsAlive or not lp.Position then status = "Local player unavailable/dead"; state = {}; return end
+        if not lp or not lp.IsAlive or not lp.Position then previousHealth=nil;status = "Local player unavailable/dead"; state = {}; return end
+        local hp=lp.Health
+        if type(hp)=="number" then
+            if previousHealth and hp<previousHealth and menu.Get("sae_ap_log") then
+                local ago=now-lastPress
+                print(string.format("[SAE parry] HP -%.1f | last F: %s | target=%s",
+                    previousHealth-hp,ago<100 and string.format("%.3fs ago",ago) or "none",lastParryTarget))
+            end
+            previousHealth=hp
+        end
         local origin = lp.Position
         local folder = game.Workspace:FindFirstChild("Mobs")
         if not utility.IsValid(folder) then status = "Workspace.Mobs missing"; state = {}; return end
@@ -807,11 +822,11 @@ local function setupParry(makeTracker)
                             old.time = t
                             old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
-                            local target = menu.Get("sae_ap_delay")/1000
+                            local target = (plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
                             local moving = now - (old.movedAt or now) <= 0.15
                             if moving and t <= target+0.9 then threatening = threatening + 1 end
                             if moving and not old.used and t >= target and t <= target+0.6 then
-                                ready[#ready+1] = {state=old, distance=distance}
+                                ready[#ready+1] = {state=old, distance=distance,name=mob.Name,id=id,time=t,target=target}
                             end
                         end
                     end
@@ -841,9 +856,14 @@ local function setupParry(makeTracker)
         end
         if ready[1] and now-lastPress >= 0.95 and key>0 and not input.IsKeyDown(key) then
             lastPress = now
+            lastParryTarget=ready[1].name
             attackAfter = now + menu.Get("sae_fight_pause") / 1000
             for _, attack in ipairs(ready) do attack.state.used = true end
             utility.KeyPress(key, 50)
+            if menu.Get("sae_ap_log") then
+                print(string.format("[SAE parry] F sent | %s | animation=%s time=%.3f target=%.3f",
+                    ready[1].name,tostring(ready[1].id),ready[1].time,ready[1].target))
+            end
             status = status .. " | F sent"
             return
         end
