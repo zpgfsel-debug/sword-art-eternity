@@ -882,6 +882,165 @@ local function setupParry(makeTracker)
     end
 end
 
+local function setupNPCESP()
+    local group = "NPC ESP"
+    menu.AddGroup(TAB,group)
+    menu.AddCheckbox(TAB,group,"sae_npc_enabled","Enable NPC ESP",true)
+    menu.AddSliderInt(TAB,group,"sae_npc_range","Maximum distance",50,10000,2000,"%d studs")
+    menu.AddSliderInt(TAB,group,"sae_npc_limit","Maximum labels",1,100,40)
+    menu.AddSliderInt(TAB,group,"sae_npc_font","Font size",10,24,14)
+    local categories = {
+        Trader={"Traders / shops",{0.95,0.8,0.25,1}},
+        Quest={"Quest givers / story NPCs",{0.3,1,0.5,1}},
+        Blacksmith={"Blacksmiths",{1,0.5,0.25,1}},
+        Cooking={"Cooking fires",{1,0.35,0.3,1}},
+    }
+    for _, category in ipairs({"Trader","Quest","Blacksmith","Cooking"}) do
+        local definition=categories[category]
+        menu.AddCheckbox(TAB,group,"sae_npc_"..category,definition[1],true)
+        menu.AddColorpicker(TAB,group,"sae_npc_color_"..category,definition[1].." color",definition[2])
+    end
+    -- Filled from the dump: exact ancestor names, including empty names.
+    local catalog = {
+{path={"World","Folder","Model","Model","Merchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Merchant (sell items)"},
+{path={"World","Folder","Model","Model","BeginnerWeapons","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Beginner weapons"},
+{path={"World","Folder","Model","Model","BeginnerWeapons","Part","ProximityPrompt"},category="Trader",label="Beginner weapons"},
+{path={"World","Folder","Model","Model","BeginnerArmor","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Beginner armor"},
+{path={"World","Folder","Model","Model","BeginnerArmor","Part","ProximityPrompt"},category="Trader",label="Beginner armor"},
+{path={"World","Folder","BeginningQuestNPC2","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"World","Folder","Cooking Fire","CookPrompt","ProximityPrompt"},category="Cooking",label="Cooking fire"},
+{path={"World","Folder","BeginningQuestNPC3","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"World","Folder","BeginningQuestNPC4","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Guide [Quest]"},
+{path={"World","Folder","BeginningQuestNPC5","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Blacksmith Guide [Quest]"},
+{path={"World","Folder","Blacksmith Vendor","Blacksmith","HumanoidRootPart","Attachment","ProximityPrompt"},category="Blacksmith",label="Blacksmith"},
+{path={"World","Folder","BeginningQuestNPC","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"World","Folder","TutorialNPC","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Tutorial Guide [Quest]"},
+{path={"World","Shops","Potions","ProximityPrompt"},category="Trader",label="Starter items"},
+{path={"Medai","WaspQuestNPC","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Medai","HorunkaQuestNPC2","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Medai","Model","Model","Merchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Merchant (sell items)"},
+{path={"Medai","Model","Model","Model","Blacksmith","HumanoidRootPart","Attachment","ProximityPrompt"},category="Blacksmith",label="Blacksmith"},
+{path={"Medai","Model","Horunka","ProximityPrompt"},category="Blacksmith",label="Blacksmith"},
+{path={"Medai","Cooking Fire","CookPrompt","ProximityPrompt"},category="Cooking",label="Cooking fire"},
+{path={"Medai","HorunkaQuestNPC1","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Medai","Potions","ProximityPrompt"},category="Trader",label="Potions"},
+{path={"Medai","TownOfBeginnings","ProximityPrompt"},category="Trader",label="Merchant (sell items)"},
+{path={"Horunka","Iron","Merchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Iron weapons"},
+{path={"Horunka","Iron","Part","ProximityPrompt"},category="Trader",label="Iron weapons"},
+{path={"Horunka","Cooking Fire","CookPrompt","ProximityPrompt"},category="Cooking",label="Cooking fire"},
+{path={"Horunka","Blacksmith Vendor","Blacksmith","HumanoidRootPart","Attachment","ProximityPrompt"},category="Blacksmith",label="Blacksmith"},
+{path={"Horunka","BeginningQuestNPC6","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Horunka","Model","Model","Merchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Merchant (sell items)"},
+{path={"Horunka","MedaiQuestNPC","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Horunka","Potions","ProximityPrompt"},category="Trader",label="Potions"},
+{path={"Tolbana","AdvancedArmor","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Advanced armor"},
+{path={"Tolbana","AdvancedArmor","Part","ProximityPrompt"},category="Trader",label="Advanced armor"},
+{path={"Tolbana","Cooking Fire","CookPrompt","ProximityPrompt"},category="Cooking",label="Cooking fire"},
+{path={"Tolbana","Model","Model","Merchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Merchant (sell items)"},
+{path={"Tolbana","TolbanaQuestNPC","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Tolbana","Steel","Merchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Steel weapons"},
+{path={"Tolbana","Steel","Part","ProximityPrompt"},category="Trader",label="Steel weapons"},
+{path={"Tolbana","TolbanaQuestNPC2","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"Tolbana","Blacksmith Vendor","Blacksmith","HumanoidRootPart","Attachment","ProximityPrompt"},category="Blacksmith",label="Blacksmith"},
+{path={"Tolbana","TownOfBeginnings","ProximityPrompt"},category="Trader",label="Merchant (sell items)"},
+{path={"Tolbana","Potions","ProximityPrompt"},category="Trader",label="Potions"},
+{path={"Dungeon","BossRoom","MainDungeonQuestNPC1","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"StoryLine","Kirito","HumanoidRootPart","StoryPrompt"},category="Quest",label="Kirito [Quest]"},
+{path={"BeginnerWeapons","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Beginner weapons"},
+{path={"BeginnerWeapons","Part","ProximityPrompt"},category="Trader",label="Beginner weapons"},
+{path={"ElfNPC","BeginningQuestNPC3","","HumanoidRootPart","QuestPrompt"},category="Quest",label="Quest giver [Quest]"},
+{path={"InnMerchant","HumanoidRootPart","Attachment","ProximityPrompt"},category="Trader",label="Iron weapons"},
+{path={"StoryLocal","Story_Agil","HumanoidRootPart","StoryMission"},category="Quest",label="Agil [Quest]"},
+{path={"StoryLocal","Story_Kirito","HumanoidRootPart","StoryMission"},category="Quest",label="Kirito [Quest]"},
+{path={"StoryLocal","Story_Klein","HumanoidRootPart","StoryMission"},category="Quest",label="Klein [Quest]"}
+}
+    local trie={}
+    for _, entry in ipairs(catalog) do
+        local branch=trie
+        for _, segment in ipairs(entry.path) do
+            branch.children=branch.children or {}
+            branch.children[segment]=branch.children[segment] or {}
+            branch=branch.children[segment]
+        end
+        branch.entry=entry
+    end
+    local candidates, scanAt={},-math.huge
+    local function scan()
+        local found,seen={},{}
+        local function add(prompt,entry)
+            if not prompt:IsA("ProximityPrompt") then return end
+            local current=prompt.Parent
+            local root,owner
+            while utility.IsValid(current) and current~=game.Workspace do
+                if not root and current:IsA("BasePart") then root=current end
+                if current:IsA("Model") then
+                    local hrp=current:FindFirstChild("HumanoidRootPart")
+                    if utility.IsValid(hrp) then root=hrp;owner=current;break end
+                end
+                current=current.Parent
+            end
+            if not utility.IsValid(root) then return end
+            local key=tostring((owner or root).Address)..":"..entry.category
+            if seen[key] then return end
+            seen[key]=true
+            found[#found+1]={root=root,prompt=prompt,label=entry.label,category=entry.category}
+        end
+        local function walk(parent,branch)
+            if branch.entry then add(parent,branch.entry) end
+            if not branch.children then return end
+            -- Iterate matching siblings instead of FindFirstChild: many map
+            -- ancestors share the name Model and may contain distinct vendors.
+            for _, child in ipairs(parent:GetChildren()) do
+                local nextBranch=branch.children[child.Name]
+                if nextBranch then walk(child,nextBranch) end
+            end
+        end
+        walk(game.Workspace,trie)
+        candidates=found
+    end
+    return function()
+        if not menu.Get("sae_npc_enabled") then return end
+        local now=utility.GetTime()
+        if now-scanAt>=3 then scanAt=now;scan() end
+        local lp=entity.GetLocalPlayer()
+        local ox,oy,oz=xyz(lp and lp.Position)
+        if not ox then return end
+        local points={}
+        for _, entry in ipairs(candidates) do
+            if menu.Get("sae_npc_"..entry.category) then
+                local ok,x,y,z=pcall(function()
+                    if utility.IsValid(entry.root) and utility.IsValid(entry.prompt)
+                        and entry.root.Parent and entry.prompt.Parent then return xyz(entry.root.Position) end
+                end)
+                if ok and x then
+                    local distance=math.sqrt((x-ox)^2+(y-oy)^2+(z-oz)^2)
+                    if distance<=menu.Get("sae_npc_range") then
+                        points[#points+1]={entry=entry,x=x,y=y,z=z,distance=distance}
+                    end
+                end
+            end
+        end
+        table.sort(points,function(a,b)return a.distance<b.distance end)
+        local size,drawn=menu.Get("sae_npc_font"),0
+        for _, point in ipairs(points) do
+            if drawn>=menu.Get("sae_npc_limit") then break end
+            local x,y=project(point.x,point.y+3,point.z)
+            if x then
+                local color=menu.GetColor("sae_npc_color_"..point.entry.category)
+                local label=point.entry.label
+                local width=draw.GetTextSize(label,size)
+                draw.Text(x-width/2,y-size-4,label,color,size)
+                local distance=string.format("%.0f studs",point.distance)
+                local dw=draw.GetTextSize(distance,size)
+                draw.Text(x-dw/2,y+4,distance,color,size)
+                drawn=drawn+1
+            end
+        end
+    end
+end
+
+local npcFrame = setupNPCESP()
+local npcErrorAt = -math.huge
 local function setupZoneESP()
     local group = "Mob zones ESP"
     menu.AddGroup(TAB, group)
@@ -975,6 +1134,11 @@ OnFrame = function()
         print("[SAE parry] Disabled: " .. tostring(err))
     end
     espFrame()
+    local npcOK,npcError=pcall(npcFrame)
+    if not npcOK and utility.GetTime()-npcErrorAt>=5 then
+        npcErrorAt=utility.GetTime()
+        print("[SAE NPC ESP] "..tostring(npcError))
+    end
     local zoneOK, zoneError = pcall(zoneFrame)
     if not zoneOK and utility.GetTime()-zoneErrorAt >= 5 then
         zoneErrorAt = utility.GetTime()
