@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.1.3"
+local SAE_VERSION = "1.1.4"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -1013,33 +1013,60 @@ local function setupStaminaDiagnostics()
     local group="Stamina diagnostics"
     menu.AddGroup(TAB,group)
     menu.AddCheckbox(TAB,group,"sae_stamina_constants","Include function constants",false)
-    menu.AddLabel(TAB,group,"Scan while in game. Results are printed to the console.")
+    menu.AddSliderInt(TAB,group,"sae_stamina_reference","Displayed stamina (for matching)",0,10000,180)
+    menu.AddLabel(TAB,group,"Scan, spend stamina, then scan again to compare values.")
     local scanning=false
+    local previous=nil
     menu.AddButton(TAB,group,"sae_stamina_scan","Scan stamina parameters",function()
         if scanning then return end
         scanning=true
         local ok,err=pcall(function()
             assert(type(getgc)=="function","Vector getgc is unavailable")
-            local keys={"Stamina","MaxStamina","staminaCost","staminaPerDamage",
+            local keys={"Stamina","stamina","MaxStamina","maxStamina","CurrentStamina","currentStamina","staminaCost","staminaPerDamage",
                 "staminaDrainPerSecond","staminaDrain","staminaRegen","staminaRegenRate"}
             local matches,scanError=getgc(keys,menu.Get("sae_stamina_constants"))
             assert(not scanError,tostring(scanError))
             assert(type(matches)=="table","getgc returned no table")
             print("[SAE stamina] Matches="..#matches.."; read-only scan, no values changed")
-            for i,match in ipairs(matches)do
-                if i>40 then print("[SAE stamina] Output capped at 40 records");break end
-                local fields={}
+            local snapshot,records,counts={}, {}, {}
+            local reference=menu.Get("sae_stamina_reference")
+            local changedCount,referenceCount=0,0
+            for _,match in ipairs(matches)do
+                local fields,priority={},0
+                local prefix=tostring(match.table)..":"..tostring(match.constant==true)..":"..tostring(match.around or "")
                 if type(match.fields)=="table"then
                     for _,key in ipairs(keys)do
                         local value=match.fields[key]
                         if type(value)=="number" or type(value)=="boolean"then
-                            fields[#fields+1]=key.."="..tostring(value)
+                            counts[key]=(counts[key] or 0)+1
+                            local id=prefix..":"..key
+                            snapshot[id]=value
+                            local label=key.."="..tostring(value)
+                            if previous and previous[id]~=nil and previous[id]~=value then
+                                label=label.." (was "..tostring(previous[id])..")"
+                                changedCount=changedCount+1;priority=priority+100
+                            end
+                            if value==reference then
+                                label=label.." [DISPLAY MATCH]";referenceCount=referenceCount+1;priority=priority+20
+                            end
+                            if key~="Stamina" and key~="stamina" then priority=priority+5 end
+                            fields[#fields+1]=label
                         end
                     end
                 end
-                print("[SAE stamina] #"..i.." table="..tostring(match.table)
-                    .." constant="..tostring(match.constant==true).." | "..table.concat(fields,", "))
+                records[#records+1]={priority=priority,text="table="..tostring(match.table)
+                    .." constant="..tostring(match.constant==true).." | "..table.concat(fields,", ")}
             end
+            for _,key in ipairs(keys)do
+                if counts[key] then print("[SAE stamina] Field "..key..": "..counts[key].." matches")end
+            end
+            print("[SAE stamina] Display reference="..reference.."; exact matches="..referenceCount)
+            if previous then print("[SAE stamina] Changed fields="..changedCount.." (same table/key addresses)")
+            else print("[SAE stamina] Baseline captured. Spend stamina, then scan again.")end
+            table.sort(records,function(a,b)return a.priority>b.priority end)
+            for i=1,math.min(#records,40)do print("[SAE stamina] #"..i.." "..records[i].text)end
+            if #records>40 then print("[SAE stamina] Showing top 40: changed values, display matches and cost parameters first")end
+            previous=snapshot
             if #matches==0 then print("[SAE stamina] No matching Lua fields found. Character attributes may not appear in getgc.")end
             print("[SAE stamina] Numeric matches may be skill costs or unrelated data; they do not prove control of server stamina.")
         end)
