@@ -1,6 +1,6 @@
 -- SAO / Project Vector: mob ESP. API: project-vector-lua-api.md.
 -- Version format selected by the user: major.minor.patch.
-local SAE_VERSION = "1.2.1"
+local SAE_VERSION = "1.2.2"
 local SAE_TITLE = "Sword Art Eternity v" .. SAE_VERSION
 -- Collider.Position is a runtime capability probe: generic BasePart properties
 -- are not fully specified in the supplied API. No offsets or fallbacks invented.
@@ -671,7 +671,7 @@ local function setupParry(makeTracker)
     -- Initial calibration value, not a verified server hit timestamp.
     menu.AddSliderInt(tab, group, "sae_ap_nepenthes_delay", "Nepenthes animation delay (ms)", 0, 1200, 250)
     menu.AddSliderFloat(tab, group, "sae_ap_matriarch_range", "Matriarch detection distance", 2, 80, 40, "%.1f")
-    menu.AddSliderInt(tab, group, "sae_ap_matriarch_delay", "Matriarch basic attack delay (ms)", 0, 1500, 250)
+    menu.AddLabel(tab, group, "Matriarch: auto attack supported; skill parry requires calibration.")
     menu.AddSliderInt(tab, group, "sae_ap_delay", "Animation delay (ms)", 0, 500, 0)
     menu.AddCheckbox(tab, group, "sae_ap_log", "Log detected attacks", false)
     menu.AddCheckbox(tab, group, "sae_ap_status", "Show parry diagnostics", true)
@@ -697,10 +697,10 @@ local function setupParry(makeTracker)
         nepenthes = {[116371641636454]=true}, windwasp = {[94230248318965]=true},
     }
     attacks.littlenepenthes = attacks.nepenthes
-    -- Basic bite only. No verified parry timings for Matriarch's special attacks.
+    -- Matriarch uses skills. Do not reuse the normal Nepenthes bite whitelist.
     local matriarchNames={nepenthesmatriarch=true,littlematriarch=true,
         littlenepenthesmatriarch=true,matriarch=true}
-    for name in pairs(matriarchNames)do attacks[name]=attacks.nepenthes end
+    for name in pairs(matriarchNames)do attacks[name]={} end
     local state, Tracker, failed = {}, nil, false
     local lastPress = -math.huge
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
@@ -833,8 +833,7 @@ local function setupParry(makeTracker)
                             old.time = t
                             old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
-                            local target = (matriarch and menu.Get("sae_ap_matriarch_delay")
-                                or plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
+                            local target = (plant and menu.Get("sae_ap_nepenthes_delay") or menu.Get("sae_ap_delay"))/1000
                             local moving = now - (old.movedAt or now) <= 0.15
                             if moving and t <= target+0.9 then threatening = threatening + 1 end
                             if moving and not old.used and t >= target and t <= target+0.6 then
