@@ -687,6 +687,7 @@ local function setupParry(makeTracker)
     local state, Tracker, failed = {}, nil, false
     local lastPress = -math.huge
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
+    local combatLogAt, clickCount = -math.huge, 0
     local status, testWasDown = "Enable parry, then hold V", false
     local nearestInfo = ""
     local toggleActive, bindWasDown, previousMode, previousBind = false, false, nil, nil
@@ -841,6 +842,21 @@ local function setupParry(makeTracker)
             elseif now < attackAfter then status = status .. " | waiting: recovery"
             elseif attackDistance == math.huge then status = status .. " | waiting: target within attack range / facing" end
         end
+        if menu.Get("sae_ap_log") and now-combatLogAt >= 2 then
+            combatLogAt = now
+            local reason
+            if not menu.Get("sae_fight_enabled") then reason = "auto combat OFF"
+            elseif not holdActive then reason = "combat activation OFF (LMB activates parry only)"
+            elseif threatening > 0 then reason = "enemy attack active"
+            elseif now < attackAfter then reason = string.format("recovery %.2fs", attackAfter-now)
+            elseif attackDistance == math.huge then reason = "no target in attack range and facing"
+            elseif input.IsKeyDown(key) then reason = "parry key held"
+            elseif not menu.Get("sae_fight_lmb") then reason = "auto LMB OFF"
+            elseif input.IsKeyDown(0x01) then reason = "manual LMB held"
+            else reason = "auto LMB ready" end
+            print(string.format("[SAE combat] %s | range=%.1f | LMB sent=%d | %s",
+                reason, menu.Get("sae_fight_range"), clickCount, nearestInfo))
+        end
         if not holdActive or not menu.Get("sae_fight_enabled") or threatening > 0
             or now < attackAfter or attackDistance == math.huge
             or input.IsKeyDown(key) then return end
@@ -861,6 +877,7 @@ local function setupParry(makeTracker)
             and now-lastClick >= menu.Get("sae_fight_interval")/1000 then
             lastClick = now
             utility.MouseClick("left")
+            clickCount = clickCount + 1
         end
     end
 end
