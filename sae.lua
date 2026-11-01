@@ -882,6 +882,90 @@ local function setupParry(makeTracker)
     end
 end
 
+local function setupZoneESP()
+    local group = "Mob zones ESP"
+    menu.AddGroup(TAB, group)
+    menu.AddCheckbox(TAB, group, "sae_zones_enabled", "Enable mob zones ESP", true)
+    menu.AddSliderInt(TAB, group, "sae_zones_range", "Maximum distance", 100, 15000, 5000, "%d studs")
+    menu.AddSliderInt(TAB, group, "sae_zones_limit", "Maximum labels", 1, 50, 20)
+    menu.AddSliderInt(TAB, group, "sae_zones_font", "Font size", 10, 24, 14)
+    menu.AddColorpicker(TAB, group, "sae_zones_color", "Zone color", {0.4, 0.85, 1, 1})
+    local zones, scanAt = {}, -math.huge
+    local function words(name) return (name:gsub("(%l)(%u)", "%1 %2")) end
+    local function collect(folder, result)
+        if not utility.IsValid(folder) then return end
+        for _, part in ipairs(folder:GetChildren()) do
+            if part:IsA("BasePart") then
+                local area, mob, low, high = part.Name:match("^(.-)_(.-)_Lv(%d+)%-?(%d*)$")
+                if area then
+                    result[#result+1] = {part=part, area=words(area), mob=words(mob),
+                        low=low, high=high~="" and high or low}
+                end
+            end
+        end
+    end
+    return function()
+        if not menu.Get("sae_zones_enabled") then return end
+        local now = utility.GetTime()
+        if now-scanAt >= 2 then
+            scanAt = now
+            local result = {}
+            -- Confirmed hierarchy: Workspace.Floor1.MobZones.
+            -- Also accept equivalent containers on other loaded floors.
+            collect(game.Workspace:FindFirstChild("MobZones"), result)
+            for _, child in ipairs(game.Workspace:GetChildren()) do
+                collect(child:FindFirstChild("MobZones"), result)
+            end
+            zones = result
+        end
+        local lp = entity.GetLocalPlayer()
+        local ox, oy, oz = xyz(lp and lp.Position)
+        if not ox then return end
+        local grouped = {}
+        for _, zone in ipairs(zones) do
+            local ok, x, y, z = pcall(function()
+                if utility.IsValid(zone.part) and zone.part.Parent then return xyz(zone.part.Position) end
+            end)
+            if ok and x then
+                local distance = math.sqrt((x-ox)^2+(y-oy)^2+(z-oz)^2)
+                if distance <= menu.Get("sae_zones_range") then
+                    -- Co-located zones with the same level range share one label.
+                    local key = string.format("%s|%s|%s|%.1f|%.1f|%.1f", zone.area,zone.low,zone.high,x,y,z)
+                    local group = grouped[key]
+                    if not group then
+                        group = {x=x,y=y,z=z,distance=distance,area=zone.area,
+                            level=zone.low==zone.high and zone.low or zone.low.."-"..zone.high,
+                            mobs={}, seen={}}
+                        grouped[key] = group
+                    end
+                    if not group.seen[zone.mob] then
+                        group.seen[zone.mob] = true; group.mobs[#group.mobs+1] = zone.mob
+                    end
+                end
+            end
+        end
+        local points = {}
+        for _, point in pairs(grouped) do points[#points+1] = point end
+        table.sort(points,function(a,b)return a.distance<b.distance end)
+        local size, color, drawn = menu.Get("sae_zones_font"), menu.GetColor("sae_zones_color"), 0
+        for _, point in ipairs(points) do
+            if drawn >= menu.Get("sae_zones_limit") then break end
+            local x, y = project(point.x,point.y,point.z)
+            if x then
+                table.sort(point.mobs)
+                local lines = {point.area, table.concat(point.mobs," / ").." [Lv."..point.level.."]",
+                    string.format("%.0f studs",point.distance)}
+                for i, line in ipairs(lines) do
+                    local width = draw.GetTextSize(line,size)
+                    draw.Text(x-width/2,y+(i-2)*(size+3),line,color,size)
+                end
+                drawn = drawn+1
+            end
+        end
+    end
+end
+local zoneFrame = setupZoneESP()
+local zoneErrorAt = -math.huge
 local parryFrame = setupParry(makeSAETracker)
 local espFrame = OnFrame
 OnFrame = function()
@@ -891,4 +975,9 @@ OnFrame = function()
         print("[SAE parry] Disabled: " .. tostring(err))
     end
     espFrame()
+    local zoneOK, zoneError = pcall(zoneFrame)
+    if not zoneOK and utility.GetTime()-zoneErrorAt >= 5 then
+        zoneErrorAt = utility.GetTime()
+        print("[SAE zone ESP] "..tostring(zoneError))
+    end
 end
