@@ -1006,6 +1006,45 @@ local function setupLootESP()
 end
 local lootFrame=setupLootESP()
 local lootErrorAt=-math.huge
+local function setupStaminaDiagnostics()
+    local group="Stamina diagnostics"
+    menu.AddGroup(TAB,group)
+    menu.AddCheckbox(TAB,group,"sae_stamina_constants","Include function constants",false)
+    menu.AddLabel(TAB,group,"Scan while in game. Results are printed to the console.")
+    local scanning=false
+    menu.AddButton(TAB,group,"sae_stamina_scan","Scan stamina parameters",function()
+        if scanning then return end
+        scanning=true
+        local ok,err=pcall(function()
+            assert(type(getgc)=="function","Vector getgc is unavailable")
+            local keys={"Stamina","MaxStamina","staminaCost","staminaPerDamage",
+                "staminaDrainPerSecond","staminaDrain","staminaRegen","staminaRegenRate"}
+            local matches,scanError=getgc(keys,menu.Get("sae_stamina_constants"))
+            assert(not scanError,tostring(scanError))
+            assert(type(matches)=="table","getgc returned no table")
+            print("[SAE stamina] Matches="..#matches.."; read-only scan, no values changed")
+            for i,match in ipairs(matches)do
+                if i>40 then print("[SAE stamina] Output capped at 40 records");break end
+                local fields={}
+                if type(match.fields)=="table"then
+                    for _,key in ipairs(keys)do
+                        local value=match.fields[key]
+                        if type(value)=="number" or type(value)=="boolean"then
+                            fields[#fields+1]=key.."="..tostring(value)
+                        end
+                    end
+                end
+                print("[SAE stamina] #"..i.." table="..tostring(match.table)
+                    .." constant="..tostring(match.constant==true).." | "..table.concat(fields,", "))
+            end
+            if #matches==0 then print("[SAE stamina] No matching Lua fields found. Character attributes may not appear in getgc.")end
+            print("[SAE stamina] Numeric matches may be skill costs or unrelated data; they do not prove control of server stamina.")
+        end)
+        scanning=false
+        if not ok then print("[SAE stamina] Scan failed: "..tostring(err))end
+    end)
+end
+setupStaminaDiagnostics()
 local function setupNPCESP()
     local group = "NPC ESP"
     menu.AddGroup(TAB,group)
