@@ -679,12 +679,12 @@ local function setupParry(makeTracker)
     menu.AddSliderInt(tab, fight, "sae_fight_skill_pause", "Pause attacks after skill (ms)", 300, 4000, 1200)
     menu.AddLabel(tab, fight, "Face your target. Skills may prevent parry during their animation.")
     local attacks = {
-        boar = {[13774059143]=true}, wolf = {[13803750988]=true},
+        boar = {[13774059143]=true, [76704099847113]=true}, wolf = {[13803750988]=true},
         koboldtrooper = {[13803854864]=true}, koboldsentinel = {[13803854864]=true},
         nepenthes = {[116371641636454]=true}, windwasp = {[94230248318965]=true},
     }
     local state, Tracker, failed = {}, nil, false
-    local lastPress, lastPoll = -math.huge, -math.huge
+    local lastPress = -math.huge
     local lastClick, attackAfter, lastSkill = -math.huge, 0, {}
     local status, testWasDown = "Enable parry, then hold V", false
     local nearestInfo = ""
@@ -727,8 +727,6 @@ local function setupParry(makeTracker)
             Tracker = result
         end
         local now = utility.GetTime()
-        if now-lastPoll < 0.02 then return end
-        lastPoll = now
         local lp = entity.GetLocalPlayer()
         if not lp or not lp.IsAlive or not lp.Position then status = "Local player unavailable/dead"; state = {}; return end
         local origin = lp.Position
@@ -778,6 +776,7 @@ local function setupParry(makeTracker)
                                 if menu.Get("sae_ap_log") then print("[SAE parry] " .. mob.Name .. " animation=" .. id .. " time=" .. t) end
                             end
                             old.time = t
+                            old.lastSeen = now
                             -- Clip time is used directly, so changed animation speed is reflected.
                             local target = menu.Get("sae_ap_delay")/1000
                             if not old.used and t >= target and t <= target+0.6 then
@@ -785,7 +784,10 @@ local function setupParry(makeTracker)
                             end
                         end
                     end
-                    for k in pairs(s.tracks) do if not active[k] then s.tracks[k]=nil end end
+                    -- A single missing sample must not re-arm the same animation.
+                    for k, record in pairs(s.tracks) do
+                        if not active[k] and now-(record.lastSeen or now)>0.15 then s.tracks[k]=nil end
+                    end
                     if distance <= menu.Get("sae_fight_range") and distance > 0.01 and look then
                         local dot = ((p.X-origin.X)*look.X+(p.Y-origin.Y)*look.Y+(p.Z-origin.Z)*look.Z)/distance
                         if dot >= 0.5 and s.tracker.Status == "OK" then
@@ -803,11 +805,14 @@ local function setupParry(makeTracker)
         table.sort(ready,function(a,b) return a.distance<b.distance end)
         local key = menu.GetKey("sae_ap_key")
         status = string.format("mobs=%d tracks=%d attacks=%d ready=%d", nearby, trackCount, matched, #ready)
+        if ready[1] and now-lastPress < 0.95 then
+            status = status .. string.format(" | cooldown %.2fs", 0.95-(now-lastPress))
+        end
         if ready[1] and now-lastPress >= 0.95 and key>0 and not input.IsKeyDown(key) then
             lastPress = now
             attackAfter = now + menu.Get("sae_fight_pause") / 1000
             for _, attack in ipairs(ready) do attack.state.used = true end
-            utility.KeyPress(key, 30)
+            utility.KeyPress(key, 50)
             status = status .. " | F sent"
             return
         end
@@ -840,10 +845,10 @@ end
 local parryFrame = setupParry(makeSAETracker)
 local espFrame = OnFrame
 OnFrame = function()
-    espFrame()
     local ok, err = pcall(parryFrame)
     if not ok then
         menu.Set("sae_ap_enabled", false)
         print("[SAE parry] Disabled: " .. tostring(err))
     end
+    espFrame()
 end
